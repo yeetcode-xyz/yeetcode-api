@@ -1043,15 +1043,15 @@ class BountyOperations:
             
             response = ddb.get_item(
                 TableName=BOUNTIES_TABLE,
-                Key={'id': {'S': bounty_id}}
+                Key={'bountyId': {'S': bounty_id}}
             )
-            
+
             if 'Item' in response:
                 bounty = normalize_dynamodb_item(response['Item'])
                 return {"success": True, "data": bounty}
-            
+
             return {"success": False, "error": "Bounty not found"}
-            
+
         except Exception as error:
             if DEBUG_MODE:
                 print(f"[ERROR] Failed to get bounty by ID: {error}")
@@ -1066,9 +1066,9 @@ class BountyOperations:
             
             response = ddb.get_item(
                 TableName=BOUNTIES_TABLE,
-                Key={'id': {'S': bounty_id}}
+                Key={'bountyId': {'S': bounty_id}}
             )
-            
+
             if 'Item' in response:
                 bounty = normalize_dynamodb_item(response['Item'])
                 users_progress = bounty.get('users', {})
@@ -1107,12 +1107,12 @@ class BountyOperations:
             # First get the current bounty to check completion requirements
             response = ddb.get_item(
                 TableName=BOUNTIES_TABLE,
-                Key={'id': {'S': bounty_id}}
+                Key={'bountyId': {'S': bounty_id}}
             )
-            
+
             if 'Item' not in response:
                 return {"success": False, "error": "Bounty not found"}
-            
+
             bounty = normalize_dynamodb_item(response['Item'])
             current_time = int(time.time())
             expiry_date = bounty.get('expirydate', 0)

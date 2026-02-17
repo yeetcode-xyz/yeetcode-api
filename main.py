@@ -143,7 +143,7 @@ app.include_router(admin_router)
 
 if DEBUG_MODE:
     print("[DEBUG] Registered routes:")
-    print("Akeen chomu but bleh!")
+    print("YeetCode is running gang! 🔥")
     for route in app.routes:
         if hasattr(route, 'path'):
             print(f"  {route.methods} {route.path}")

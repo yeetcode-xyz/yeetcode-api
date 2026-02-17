@@ -37,8 +37,11 @@ def discord_log(message: str):
 # TASK 1: Update User Stats
 # ========================================
 
-def fetch_user_stats(username: str) -> Dict:
-    """Fetch user stats from LeetCode GraphQL API"""
+def fetch_user_stats(username: str) -> Optional[Dict]:
+    """Fetch user stats from LeetCode GraphQL API.
+    Returns None if the user definitively does not exist on LeetCode.
+    Returns {"easy": 0, "medium": 0, "hard": 0} on transient errors (retry next cycle).
+    """
     url = "https://leetcode.com/graphql"
     query = """
       query getUserStats($username: String!) {
@@ -59,8 +62,14 @@ def fetch_user_stats(username: str) -> Dict:
         log.error(f"Error fetching stats for {username}: {e}")
         return {"easy": 0, "medium": 0, "hard": 0}
 
+    matched_user = (data.get("data") or {}).get("matchedUser")
+
+    # LeetCode explicitly says this user does not exist
+    if matched_user is None:
+        return None
+
     easy = medium = hard = 0
-    submissions = data.get("data", {}).get("matchedUser", {}).get("submitStats", {}).get("acSubmissionNum", [])
+    submissions = (matched_user.get("submitStats") or {}).get("acSubmissionNum") or []
 
     for item in submissions:
         difficulty = item.get("difficulty", "")
@@ -112,7 +121,7 @@ def check_daily_completion(username: str) -> Optional[str]:
         response.raise_for_status()
         data = response.json()
 
-        submissions = data.get("data", {}).get("recentSubmissionList", [])
+        submissions = (data.get("data") or {}).get("recentSubmissionList") or []
 
         # Status 10 = Accepted
         if any(sub.get("status") == 10 and sub.get("titleSlug") == slug for sub in submissions):
@@ -130,7 +139,13 @@ async def process_single_user(username: str) -> bool:
         # Run in thread pool to avoid blocking
         stats = await asyncio.to_thread(fetch_user_stats, username)
 
-        # Skip if stats fetch failed
+        # None means LeetCode definitively says this user does not exist
+        if stats is None:
+            log.warning(f"⚠️ {username} has no matching LeetCode account — flagging as invalid")
+            update_user_in_cache(username.lower(), {"leetcode_invalid": True})
+            return False
+
+        # Empty/falsy dict means transient error — skip this cycle, retry next time
         if not stats:
             log.warning(f"⚠️ Failed to fetch stats for {username}")
             return False
@@ -193,12 +208,14 @@ async def update_user_stats():
             log.error("Failed to fetch users")
             return
 
-        # Extract usernames from DynamoDB items (exclude verification_ entries)
+        # Extract usernames from DynamoDB items (exclude verification_ entries and invalid LeetCode accounts)
         from aws import normalize_dynamodb_item
         users = [normalize_dynamodb_item(item) for item in response["Items"]]
         usernames = [
             u.get("username") for u in users
-            if u.get("username") and not u.get("username").startswith("verification_")
+            if u.get("username")
+            and not u.get("username").startswith("verification_")
+            and not u.get("leetcode_invalid")
         ]
         log.info(f"📊 Processing {len(usernames)} users...")
 
@@ -270,9 +287,15 @@ async def update_bounty_progress():
             log.error("Failed to fetch users")
             return
 
-        # Extract users from DynamoDB items
+        # Extract users from DynamoDB items (exclude verification_ entries and invalid LeetCode accounts)
         from aws import normalize_dynamodb_item
-        users = [normalize_dynamodb_item(item) for item in response["Items"]]
+        all_items = [normalize_dynamodb_item(item) for item in response["Items"]]
+        users = [
+            u for u in all_items
+            if u.get("username")
+            and not u.get("username").startswith("verification_")
+            and not u.get("leetcode_invalid")
+        ]
         log.info(f"👥 Processing {len(users)} users...")
 
         completion_count = 0
@@ -283,7 +306,7 @@ async def update_bounty_progress():
                 continue
 
             for bounty in bounties:
-                bounty_id = bounty.get("id")
+                bounty_id = bounty.get("bountyId")
 
                 # Skip bounties with missing IDs
                 if not bounty_id:

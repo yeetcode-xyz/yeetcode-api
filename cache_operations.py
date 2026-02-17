@@ -285,7 +285,7 @@ def update_bounty_in_cache(bounty_id: str, username: str, progress: int) -> bool
             return False
 
         bounties = cached_bounties.get('data', [])
-        bounty = next((b for b in bounties if b.get('id') == bounty_id), None)
+        bounty = next((b for b in bounties if b.get('bountyId') == bounty_id), None)
 
         if not bounty:
             return False
@@ -302,7 +302,7 @@ def update_bounty_in_cache(bounty_id: str, username: str, progress: int) -> bool
             wal_operation={
                 "operation": "UPDATE",
                 "table": BOUNTIES_TABLE,
-                "key": {"id": bounty_id},
+                "key": {"bountyId": bounty_id},
                 "data": {"users": {username: progress}}
             }
         )
