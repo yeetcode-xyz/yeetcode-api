@@ -1314,6 +1314,9 @@ class DuelOperations:
             if not DUELS_TABLE:
                 raise Exception("DUELS_TABLE not configured")
 
+            if not duel_id:
+                return {"success": False, "error": "duel_id is required"}
+
             normalized_username = username.lower()
 
             # Get duel details to check if it's a wager duel
@@ -1385,9 +1388,12 @@ class DuelOperations:
         try:
             if not DUELS_TABLE:
                 raise Exception("DUELS_TABLE not configured")
-            
+
+            if not duel_id:
+                return {"success": False, "error": "duel_id is required"}
+
             normalized_username = username.lower()
-            
+
             # First get the duel to determine if user is challenger or challengee
             get_params = {
                 'TableName': DUELS_TABLE,
@@ -1441,6 +1447,9 @@ class DuelOperations:
     def reject_duel(duel_id: str) -> Dict:
         """Reject a duel (CACHE-FIRST)"""
         try:
+            if not duel_id:
+                return {"success": False, "error": "duel_id is required"}
+
             # CACHE-FIRST: Delete duel from cache
             from cache_operations import delete_duel_from_cache
             success = delete_duel_from_cache(duel_id)
@@ -1480,9 +1489,12 @@ class DuelOperations:
         try:
             if not DUELS_TABLE or not USERS_TABLE:
                 raise Exception("Tables not configured")
-            
+
+            if not duel_id:
+                return {"success": False, "error": "duel_id is required"}
+
             normalized_username = username.lower()
-            
+
             # Get current duel details
             get_params = {
                 'TableName': DUELS_TABLE,
@@ -1662,7 +1674,10 @@ class DuelOperations:
         try:
             if not DUELS_TABLE:
                 raise Exception("DUELS_TABLE not configured")
-            
+
+            if not duel_id:
+                return {"success": False, "error": "duel_id is required"}
+
             get_params = {
                 'TableName': DUELS_TABLE,
                 'Key': {'duelId': {'S': duel_id}},
@@ -1705,7 +1720,7 @@ class DuelOperations:
                 raise Exception("DUELS_TABLE not configured")
             
             now = int(time.time())
-            three_hours_ago = now - 3 * 60 * 60  # 3 hours for pending duels
+            three_hours_ago = now - 30 * 60       # 30 minutes for pending duels
             two_hours_ago = now - 2 * 60 * 60    # 2 hours for active duels
             
             # Scan for expired duels

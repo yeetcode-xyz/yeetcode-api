@@ -15,6 +15,7 @@ from background_tasks import (
     update_bounty_progress,
     generate_daily_problem
 )
+from aws import DuelOperations
 from cache_dumper import dump_cache_to_db
 
 log = logging.getLogger(__name__)
@@ -75,6 +76,17 @@ def create_scheduler() -> AsyncIOScheduler:
         max_instances=1,
     )
     log.info("✅ Scheduled: Dump cache to DynamoDB (every 10 minutes)")
+
+    # Task 5: Clean up expired/pending duels every 10 minutes
+    scheduler.add_job(
+        DuelOperations.cleanup_expired_duels,
+        trigger=IntervalTrigger(minutes=10),
+        id='cleanup_expired_duels',
+        name='Clean Up Expired Duels',
+        replace_existing=True,
+        max_instances=1,
+    )
+    log.info("✅ Scheduled: Clean up expired duels (every 10 minutes)")
 
     return scheduler
 
@@ -155,6 +167,8 @@ async def trigger_job_manually(job_id: str) -> dict:
             await generate_daily_problem()
         elif job_id == 'dump_cache_to_db':
             await dump_cache_to_db()
+        elif job_id == 'cleanup_expired_duels':
+            DuelOperations.cleanup_expired_duels()
         else:
             return {"success": False, "error": f"Unknown job ID: {job_id}"}
 

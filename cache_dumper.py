@@ -204,12 +204,16 @@ async def dump_cache_to_db() -> Dict:
             try:
                 if operation == "UPDATE":
                     # Build UpdateExpression from data
+                    # Always alias field names with ExpressionAttributeNames to avoid
+                    # reserved keyword conflicts (users, date, status, name, etc.)
                     update_expr_parts = []
+                    expr_attr_names = {}
                     expr_attr_values = {}
 
                     for field, value in data.items():
-                        update_expr_parts.append(f"{field} = :{field}")
-                        # Convert to DynamoDB format using helper to preserve types
+                        alias = f"#f_{field}"
+                        update_expr_parts.append(f"{alias} = :{field}")
+                        expr_attr_names[alias] = field
                         expr_attr_values[f":{field}"] = convert_value_to_dynamodb(value)
 
                     # Convert key to DynamoDB format
@@ -225,6 +229,7 @@ async def dump_cache_to_db() -> Dict:
                         TableName=table,
                         Key=dynamodb_key,
                         UpdateExpression=f"SET {', '.join(update_expr_parts)}",
+                        ExpressionAttributeNames=expr_attr_names,
                         ExpressionAttributeValues=expr_attr_values
                     )
 
@@ -253,12 +258,15 @@ async def dump_cache_to_db() -> Dict:
                     )
 
                 elif operation == "INCREMENT":
-                    # Build increment expression
+                    # Build increment expression with aliased field names
                     update_expr_parts = []
+                    expr_attr_names = {}
                     expr_attr_values = {}
 
                     for field, value in data.items():
-                        update_expr_parts.append(f"{field} = if_not_exists({field}, :zero) + :{field}")
+                        alias = f"#f_{field}"
+                        update_expr_parts.append(f"{alias} = if_not_exists({alias}, :zero) + :{field}")
+                        expr_attr_names[alias] = field
                         expr_attr_values[f":{field}"] = {'N': str(value)}
 
                     expr_attr_values[":zero"] = {'N': '0'}
@@ -275,6 +283,7 @@ async def dump_cache_to_db() -> Dict:
                         TableName=table,
                         Key=dynamodb_key,
                         UpdateExpression=f"SET {', '.join(update_expr_parts)}",
+                        ExpressionAttributeNames=expr_attr_names,
                         ExpressionAttributeValues=expr_attr_values
                     )
 

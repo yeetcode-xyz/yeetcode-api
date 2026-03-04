@@ -2,7 +2,7 @@
 Pydantic models for YeetCode API
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, model_validator
 from typing import Optional, Dict, List
 
 
@@ -75,3 +75,10 @@ class DuelRequest(BaseModel):
     difficulty: Optional[str] = None
     is_wager: Optional[bool] = False
     wager_amount: Optional[int] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def accept_camel_case_duel_id(cls, data):
+        if isinstance(data, dict) and 'duelId' in data and not data.get('duel_id'):
+            data['duel_id'] = data['duelId']
+        return data

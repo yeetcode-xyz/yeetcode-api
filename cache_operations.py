@@ -119,32 +119,33 @@ def award_xp_in_cache(username: str, xp_amount: int) -> bool:
         True if successful
     """
     try:
-        # Get current user data
-        cached_users = cache_manager.get(CacheType.USERS)
-        if not cached_users or not cached_users.get('success'):
-            return False
+        with cache_manager._lock:
+            # Get current user data inside lock to prevent lost-update race conditions
+            cached_users = cache_manager.get(CacheType.USERS)
+            if not cached_users or not cached_users.get('success'):
+                return False
 
-        users = cached_users.get('data', [])
-        user = next((u for u in users if u.get('username') == username), None)
+            users = cached_users.get('data', [])
+            user = next((u for u in users if u.get('username') == username), None)
 
-        if not user:
-            return False
+            if not user:
+                return False
 
-        # Increment XP
-        current_xp = user.get('xp', 0)
-        user['xp'] = current_xp + xp_amount
+            # Increment XP — cast to int defensively in case DB stored it as a string
+            current_xp = int(user.get('xp') or 0)
+            user['xp'] = current_xp + xp_amount
 
-        # Write back to cache
-        return cache_manager.write(
-            cache_type=CacheType.USERS,
-            data=cached_users,
-            wal_operation={
-                "operation": "INCREMENT",
-                "table": USERS_TABLE,
-                "key": {"username": username},
-                "data": {"xp": xp_amount}
-            }
-        )
+            # Write back to cache
+            return cache_manager.write(
+                cache_type=CacheType.USERS,
+                data=cached_users,
+                wal_operation={
+                    "operation": "INCREMENT",
+                    "table": USERS_TABLE,
+                    "key": {"username": username},
+                    "data": {"xp": xp_amount}
+                }
+            )
 
     except Exception as e:
         error(f"Failed to award XP in cache: {e}")
@@ -189,13 +190,15 @@ def complete_daily_in_cache(username: str, date: str) -> bool:
                         current_streak = cached_user_data.get('streak', 0)
                         last_completed_date = cached_user_data.get('last_completed_date')
 
+                already_completed_today = last_completed_date == date
+
                 # Check if user completed yesterday to determine streak continuation
-                if last_completed_date == yesterday_date:
+                if already_completed_today:
+                    # Already completed today - don't change streak or award XP again
+                    new_streak = current_streak
+                elif last_completed_date == yesterday_date:
                     # User completed yesterday - continue streak
                     new_streak = current_streak + 1
-                elif last_completed_date == date:
-                    # Already completed today - don't change streak
-                    new_streak = current_streak
                 else:
                     # Streak broken or starting new - reset to 1
                     new_streak = 1
@@ -227,9 +230,9 @@ def complete_daily_in_cache(username: str, date: str) -> bool:
                     username
                 )
 
-                # Award XP for daily completion (200 XP)
-                # CRITICAL: This was missing after cache-first migration, causing users to get 0 XP
-                award_xp_in_cache(username, 200)
+                # Award XP for daily completion (200 XP) — only if not already awarded today
+                if not already_completed_today:
+                    award_xp_in_cache(username, 200)
 
         # Update BOTH daily problem cache AND daily completions cache
         cached_daily = cache_manager.get(CacheType.DAILY_PROBLEM)

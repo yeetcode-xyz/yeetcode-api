@@ -167,12 +167,12 @@ async def process_single_user(username: str) -> bool:
             stats["hard"] != current_hard):
 
             # CACHE-FIRST: Write to cache instead of DB
-            # Include XP to preserve bonus XP from daily challenges, duels, etc.
+            # Do NOT include XP here — XP is managed separately by award_xp_in_cache.
+            # Including it would overwrite cached XP with a stale DB value (WAL lag = up to 10 min).
             success = update_user_in_cache(username.lower(), {
                 "easy": stats["easy"],
                 "medium": stats["medium"],
                 "hard": stats["hard"],
-                "xp": current_xp  # Preserve existing XP
             })
 
             if success:
@@ -180,12 +180,13 @@ async def process_single_user(username: str) -> bool:
             else:
                 log.error(f"❌ Failed to update stats in cache for {username}")
 
-        # Check daily completion
+        # Check daily completion and auto-award XP if solved
         completed_slug = await asyncio.to_thread(check_daily_completion, username)
         if completed_slug:
-            log.info(f"🎯 {username} completed daily problem: {completed_slug}")
-            # Note: Daily completion XP is awarded via the existing complete-daily-problem endpoint
-            # which is called by the Electron app when it detects completion
+            today = datetime.utcnow().strftime("%Y-%m-%d")
+            from cache_operations import complete_daily_in_cache
+            complete_daily_in_cache(username.lower(), today)
+            log.info(f"🎯 {username} completed daily problem: {completed_slug} — marked complete and XP awarded")
 
         return True
     except Exception as e:

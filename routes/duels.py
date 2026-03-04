@@ -141,7 +141,7 @@ async def reject_duel_endpoint(
 ):
     """Reject a duel"""
     try:
-        duel_id = request.get('duel_id')
+        duel_id = request.get('duel_id') or request.get('duelId')
         if not duel_id:
             return {"success": False, "error": "Duel ID required"}
         
