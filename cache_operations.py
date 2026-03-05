@@ -167,6 +167,19 @@ def complete_daily_in_cache(username: str, date: str) -> bool:
     try:
         # Update user's 'today' field and calculate new streak
         cached_users = cache_manager.get(CacheType.USERS)
+
+        # Reload USERS from DynamoDB if cache is expired (same fallback as update_user_in_cache)
+        if not cached_users or not cached_users.get('success'):
+            import os as _os
+            from aws import ddb as _ddb, normalize_dynamodb_item as _norm
+            from logger import info as _info
+            table_name = _os.environ.get('USERS_TABLE', 'Yeetcode_users')
+            scan_result = _ddb.scan(TableName=table_name)
+            normalized = [_norm(u) for u in scan_result.get('Items', [])]
+            cached_users = {"success": True, "data": normalized}
+            cache_manager.set(CacheType.USERS, cached_users)
+            _info(f"complete_daily_in_cache: reloaded {len(normalized)} users from DynamoDB")
+
         if cached_users and cached_users.get('success'):
             users = cached_users.get('data', [])
             user = next((u for u in users if u.get('username') == username), None)
@@ -178,17 +191,19 @@ def complete_daily_in_cache(username: str, date: str) -> bool:
                 today_date = datetime.strptime(date, '%Y-%m-%d')
                 yesterday_date = (today_date - timedelta(days=1)).strftime('%Y-%m-%d')
 
-                # Get user's current streak and last completed date
-                # Check user object first (already have it), then USER_DAILY_DATA cache
+                # USER_DAILY_DATA is the authoritative in-memory source for streak state —
+                # it has a 24h TTL and is updated atomically whenever complete_daily_in_cache runs.
+                # Prefer it over the USERS cache which may have been reloaded from stale DynamoDB.
                 current_streak = user.get('streak', 0)
                 last_completed_date = user.get('last_completed_date')
 
-                # If not in user object, check USER_DAILY_DATA cache
-                if not last_completed_date:
-                    cached_user_data = cache_manager.get(CacheType.USER_DAILY_DATA, username)
-                    if cached_user_data:
-                        current_streak = cached_user_data.get('streak', 0)
-                        last_completed_date = cached_user_data.get('last_completed_date')
+                cached_user_data = cache_manager.get(CacheType.USER_DAILY_DATA, username)
+                if cached_user_data:
+                    # USER_DAILY_DATA is more recent than a DynamoDB-reloaded USERS entry
+                    cached_lcd = cached_user_data.get('last_completed_date')
+                    if cached_lcd and (not last_completed_date or cached_lcd >= last_completed_date):
+                        current_streak = cached_user_data.get('streak', current_streak)
+                        last_completed_date = cached_lcd
 
                 already_completed_today = last_completed_date == date
 

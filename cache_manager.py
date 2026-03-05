@@ -68,7 +68,7 @@ class CacheManager:
             CacheType.DUELS: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
             CacheType.GROUPS: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
             CacheType.UNIVERSITY_LEADERBOARD: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
-            CacheType.USER_DAILY_DATA: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
+            CacheType.USER_DAILY_DATA: {"ttl": 86400, "refresh_interval": None},  # 24 hours — streak must persist across the day
         }
         
         # Start background refresh thread
