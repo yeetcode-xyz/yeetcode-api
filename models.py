@@ -78,7 +78,20 @@ class DuelRequest(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def accept_camel_case_duel_id(cls, data):
-        if isinstance(data, dict) and 'duelId' in data and not data.get('duel_id'):
-            data['duel_id'] = data['duelId']
+    def accept_camel_case_fields(cls, data):
+        if not isinstance(data, dict):
+            return data
+        mapping = {
+            'duelId':        'duel_id',
+            'challenger':    'username',
+            'challengee':    'opponent',
+            'problemSlug':   'problem_slug',
+            'problemTitle':  'problem_title',
+            'problemNumber': 'problem_number',
+            'isWager':       'is_wager',
+            'wagerAmount':   'wager_amount',
+        }
+        for camel, snake in mapping.items():
+            if camel in data and not data.get(snake):
+                data[snake] = data[camel]
         return data
