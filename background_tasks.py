@@ -181,12 +181,18 @@ async def process_single_user(username: str) -> bool:
                 log.error(f"❌ Failed to update stats in cache for {username}")
 
         # Check daily completion and auto-award XP if solved
-        completed_slug = await asyncio.to_thread(check_daily_completion, username)
-        if completed_slug:
-            today = datetime.utcnow().strftime("%Y-%m-%d")
-            from cache_operations import complete_daily_in_cache
-            complete_daily_in_cache(username.lower(), today)
-            log.info(f"🎯 {username} completed daily problem: {completed_slug} — marked complete and XP awarded")
+        # First check if already marked complete today to avoid redundant WAL writes
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        already_done = False
+        if user_data.get('last_completed_date') == today:
+            already_done = True
+
+        if not already_done:
+            completed_slug = await asyncio.to_thread(check_daily_completion, username)
+            if completed_slug:
+                from cache_operations import complete_daily_in_cache
+                complete_daily_in_cache(username.lower(), today)
+                log.info(f"🎯 {username} completed daily problem: {completed_slug} — marked complete and XP awarded")
 
         return True
     except Exception as e:
@@ -268,29 +274,36 @@ async def update_bounty_progress():
     log.info("🎯 Starting bounty progress update task...")
 
     try:
-        # Get all bounties
-        bounties_result = BountyOperations.get_all_bounties()
-        if not bounties_result.get("success"):
-            log.error("Failed to fetch bounties")
-            return
-
-        bounties = bounties_result.get("data", [])
+        # Get all bounties from CACHE (not DB) so we see users already marked complete
+        cached_bounties = cache_manager.get(CacheType.BOUNTIES)
+        if not cached_bounties or not cached_bounties.get("success"):
+            # Fallback to DB if cache miss
+            bounties_result = BountyOperations.get_all_bounties()
+            if not bounties_result.get("success"):
+                log.error("Failed to fetch bounties")
+                return
+            bounties = bounties_result.get("data", [])
+        else:
+            bounties = cached_bounties.get("data", [])
         log.info(f"📦 Loaded {len(bounties)} bounties")
 
         # Debug: Log first bounty structure if available
         if bounties:
             log.info(f"🔍 Sample bounty keys: {list(bounties[0].keys())}")
 
-        # Get all users by scanning the users table
-        response = ddb.scan(TableName=os.environ.get("TABLE_NAME", "Yeetcode_users"))
+        # Get all users from CACHE (not DB) so we see accurate current state
+        cached_users = cache_manager.get(CacheType.USERS)
+        if cached_users and cached_users.get("success"):
+            all_items = cached_users.get("data", [])
+        else:
+            # Fallback to DB if cache miss
+            response = ddb.scan(TableName=os.environ.get("TABLE_NAME", "Yeetcode_users"))
+            if "Items" not in response:
+                log.error("Failed to fetch users")
+                return
+            from aws import normalize_dynamodb_item
+            all_items = [normalize_dynamodb_item(item) for item in response["Items"]]
 
-        if "Items" not in response:
-            log.error("Failed to fetch users")
-            return
-
-        # Extract users from DynamoDB items (exclude verification_ entries and invalid LeetCode accounts)
-        from aws import normalize_dynamodb_item
-        all_items = [normalize_dynamodb_item(item) for item in response["Items"]]
         users = [
             u for u in all_items
             if u.get("username")
@@ -320,7 +333,12 @@ async def update_bounty_progress():
                 # Get user's current value for this metric
                 user_value = get_user_metric_value(user, metric)
 
-                # Check if user completed the bounty
+                # Check if user already completed this bounty
+                existing_users = bounty.get("users", {})
+                if username in existing_users:
+                    continue  # Already tracked, skip
+
+                # Check if user meets the bounty requirement
                 if user_value >= required_count:
                     # CACHE-FIRST: Update bounty progress in cache
                     try:

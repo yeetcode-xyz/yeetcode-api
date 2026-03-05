@@ -164,6 +164,56 @@ async def dump_cache_to_db() -> Dict:
 
         info(f"📦 Found {len(wal_entries)} new WAL entries to sync to DynamoDB")
 
+        # Deduplicate: For UPDATE operations on the same (table, key), only the latest matters.
+        # INCREMENT operations must NOT be deduplicated (they are additive).
+        # Process: separate INCREMENTs, deduplicate UPDATEs/PUTs, merge back in order.
+        deduped_entries = []
+        seen_update_keys = {}  # (table, key_tuple) -> index in deduped_entries
+
+        for entry in wal_entries:
+            operation = entry.get('operation')
+            table = entry.get('table')
+            key = entry.get('key', {})
+
+            if operation in ("UPDATE", "PUT"):
+                # Create a hashable key identifier
+                key_tuple = (table, tuple(sorted(key.items())))
+                if key_tuple in seen_update_keys:
+                    # Replace old entry with newer one (merge data for UPDATEs)
+                    old_idx = seen_update_keys[key_tuple]
+                    old_entry = deduped_entries[old_idx]
+                    if operation == "UPDATE" and old_entry.get('operation') == "UPDATE":
+                        # Merge data fields (newer overwrites older)
+                        merged_data = {**old_entry.get('data', {}), **entry.get('data', {})}
+                        entry = {**entry, 'data': merged_data}
+                    deduped_entries[old_idx] = entry
+                else:
+                    seen_update_keys[key_tuple] = len(deduped_entries)
+                    deduped_entries.append(entry)
+            else:
+                # INCREMENT, DELETE, etc. - keep all of them
+                deduped_entries.append(entry)
+
+        # Remove None placeholders (shouldn't happen but be safe)
+        deduped_entries = [e for e in deduped_entries if e is not None]
+
+        original_count = len(wal_entries)
+        info(f"🔄 Deduplicated {original_count} -> {len(deduped_entries)} WAL entries")
+
+        # Track the max sequence from ALL original entries so we can advance the checkpoint
+        # past all the redundant entries we deduplicated away
+        max_original_sequence = max(e.get('sequence', -1) for e in wal_entries)
+
+        # Limit batch size to prevent hanging (process max 500 entries per dump cycle)
+        MAX_ENTRIES_PER_DUMP = 500
+        entries_to_process = deduped_entries[:MAX_ENTRIES_PER_DUMP]
+        processing_all = len(deduped_entries) <= MAX_ENTRIES_PER_DUMP
+        if not processing_all:
+            info(f"⚡ Processing first {MAX_ENTRIES_PER_DUMP} of {len(deduped_entries)} entries this cycle")
+            # When not processing all, we can only advance checkpoint to the max sequence
+            # of entries we're actually processing
+            max_original_sequence = max(e.get('sequence', -1) for e in entries_to_process)
+
         # Track stats
         total_synced = 0
         total_failed = 0
@@ -173,7 +223,7 @@ async def dump_cache_to_db() -> Dict:
         # CRITICAL: We must stop on first failure to prevent double-applying later INCREMENTs
         # Example: seq 1 ✅, seq 2 ❌, seq 3 INCREMENT ✅ (checkpoint=1)
         # Next run: seq 2 fails again, seq 3 replayed → INCREMENT applied twice!
-        for entry in wal_entries:
+        for entry in entries_to_process:
             operation = entry.get('operation')
             table = entry.get('table')
             key = entry.get('key')
@@ -298,11 +348,6 @@ async def dump_cache_to_db() -> Dict:
 
                 total_synced += 1
 
-                # Update checkpoint after each successful operation
-                # This is safe because we STOP on first failure (break above)
-                if entry_sequence >= 0:
-                    wal_manager.set_last_applied_sequence(entry_sequence)
-
             except Exception as e:
                 total_failed += 1
                 error_msg = f"Failed to sync WAL entry at sequence {entry_sequence} to {table}: {e}"
@@ -313,15 +358,11 @@ async def dump_cache_to_db() -> Dict:
 
         # Mark success if all synced
         if total_failed == 0:
-            # CRITICAL FIX: Clear WAL entries ONLY up to the last successfully applied sequence
-            # This prevents race condition where new writes after our snapshot are lost
+            # Advance checkpoint to cover all original WAL entries (including deduplicated ones)
+            wal_manager.set_last_applied_sequence(max_original_sequence)
 
-            # Get the highest sequence we successfully applied
-            last_synced_sequence = wal_manager.get_last_applied_sequence()
-
-            # Clear WAL entries up to last_synced_sequence, keeping any concurrent writes
-            # that occurred after our snapshot (sequence > last_synced_sequence)
-            wal_manager.clear_up_to(last_synced_sequence)
+            # Clear WAL entries up to the max sequence we covered
+            wal_manager.clear_up_to(max_original_sequence)
 
             # Note: We intentionally DON'T call cache_manager.mark_synced() here because:
             # - Cache entries don't track their WAL sequence number
@@ -329,13 +370,13 @@ async def dump_cache_to_db() -> Dict:
             # - Dirty flags in cache are eventually consistent (background task marks them synced)
             # - The WAL checkpoint is our source of truth for what's been persisted
 
-            info(f"✅ Cache dump complete: {total_synced} WAL operations synced to DynamoDB (checkpoint: {last_synced_sequence})")
+            info(f"✅ Cache dump complete: {total_synced} WAL operations synced to DynamoDB (checkpoint: {max_original_sequence}, deduped from {original_count})")
 
             return {
                 "success": True,
                 "entries": total_synced,
                 "failed": 0,
-                "checkpoint": last_synced_sequence
+                "checkpoint": max_original_sequence
             }
         else:
             warning(f"⚠️ Cache dump partially failed: {total_failed}/{len(wal_entries)} operations failed")

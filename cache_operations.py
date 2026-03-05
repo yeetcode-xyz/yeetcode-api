@@ -222,54 +222,56 @@ def complete_daily_in_cache(username: str, date: str) -> bool:
                 user['streak'] = new_streak
                 user['last_completed_date'] = date
 
-                # Write to cache with WAL to persist streak data to database
-                cache_manager.write(
-                    cache_type=CacheType.USERS,
-                    data=cached_users,
-                    wal_operation={
-                        "operation": "UPDATE",
-                        "table": USERS_TABLE,
-                        "key": {"username": username},
-                        "data": {
-                            "today": 1,
-                            "streak": new_streak,
-                            "last_completed_date": date
+                # Only write WAL if this is a NEW completion (avoid redundant WAL entries)
+                if not already_completed_today:
+                    # Write to cache with WAL to persist streak data to database
+                    cache_manager.write(
+                        cache_type=CacheType.USERS,
+                        data=cached_users,
+                        wal_operation={
+                            "operation": "UPDATE",
+                            "table": USERS_TABLE,
+                            "key": {"username": username},
+                            "data": {
+                                "today": 1,
+                                "streak": new_streak,
+                                "last_completed_date": date
+                            }
                         }
-                    }
-                )
+                    )
 
-                # Also update USER_DAILY_DATA cache for faster reads
+                    # Award XP for daily completion (200 XP)
+                    award_xp_in_cache(username, 200)
+
+                # Always update USER_DAILY_DATA cache for faster reads (no WAL needed)
                 cache_manager.set(
                     CacheType.USER_DAILY_DATA,
                     {'streak': new_streak, 'last_completed_date': date},
                     username
                 )
 
-                # Award XP for daily completion (200 XP) — only if not already awarded today
-                if not already_completed_today:
-                    award_xp_in_cache(username, 200)
-
         # Update BOTH daily problem cache AND daily completions cache
+        # Only write WAL if this is a new completion
         cached_daily = cache_manager.get(CacheType.DAILY_PROBLEM)
         if cached_daily and cached_daily.get('success'):
             daily_data = cached_daily.get('data', {})
             if daily_data.get('date') == date:
                 if 'users' not in daily_data:
                     daily_data['users'] = {}
-                daily_data['users'][username] = True
+                if username not in daily_data['users']:
+                    daily_data['users'][username] = True
+                    cache_manager.write(
+                        cache_type=CacheType.DAILY_PROBLEM,
+                        data=cached_daily,
+                        wal_operation={
+                            "operation": "UPDATE",
+                            "table": DAILY_TABLE,
+                            "key": {"date": date},
+                            "data": {"users": {username: True}}
+                        }
+                    )
 
-                cache_manager.write(
-                    cache_type=CacheType.DAILY_PROBLEM,
-                    data=cached_daily,
-                    wal_operation={
-                        "operation": "UPDATE",
-                        "table": DAILY_TABLE,
-                        "key": {"date": date},
-                        "data": {"users": {username: True}}
-                    }
-                )
-
-        # Also update DAILY_COMPLETIONS cache (used by GET endpoint)
+        # Also update DAILY_COMPLETIONS cache (used by GET endpoint, no WAL needed)
         cached_completions = cache_manager.get(CacheType.DAILY_COMPLETIONS)
         if cached_completions:
             comp_data = cached_completions.get('data', {})
