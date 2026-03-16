@@ -117,7 +117,7 @@ async def load_all_data_into_cache() -> Dict:
             cache_manager.set(
                 cache_type=CacheType.DUELS,
                 data={"success": True, "data": duels},
-                ttl=60  # 1 minute TTL
+                ttl=300  # 5 minute TTL
             )
 
             stats['duels'] = len(duels)

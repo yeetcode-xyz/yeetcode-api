@@ -65,7 +65,7 @@ class CacheManager:
             CacheType.DAILY_PROBLEM: {"ttl": 86400, "refresh_interval": 86400},  # 24 hours (refreshed at 12:02 AM UTC)
             CacheType.DAILY_COMPLETIONS: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
             CacheType.USERS: {"ttl": 300, "refresh_interval": None},  # 5 minutes, no auto-refresh (cache-first writes keep it fresh)
-            CacheType.DUELS: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
+            CacheType.DUELS: {"ttl": 300, "refresh_interval": None},  # 5 minutes (cache-first writes keep it fresh)
             CacheType.GROUPS: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
             CacheType.UNIVERSITY_LEADERBOARD: {"ttl": 60, "refresh_interval": None},  # 1 minute, no auto-refresh
             CacheType.USER_DAILY_DATA: {"ttl": 86400, "refresh_interval": None},  # 24 hours — streak must persist across the day

@@ -19,28 +19,25 @@ async def get_user_duels_endpoint(
     username: str,
     api_key: str = Depends(verify_api_key)
 ):
-    """Get duels for a user and automatically clean up expired duels"""
+    """Get duels for a user"""
     try:
-        # First, clean up any expired duels automatically
-        cleanup_result = DuelOperations.cleanup_expired_duels()
-        if cleanup_result.get('count', 0) > 0:
-            print(f"[DEBUG] Cleaned up {cleanup_result.get('count', 0)} expired duels during get_user_duels")
-        
+        normalized = username.lower()
+
         # Check cache first for duels
         cached_duels = cache_manager.get(CacheType.DUELS)
         if cached_duels:
             # Filter duels for this user
             user_duels = []
             for duel in cached_duels.get('data', []):
-                if (duel.get('username') == username or 
-                    duel.get('opponent') == username):
+                if (duel.get('challenger') == normalized or
+                    duel.get('challengee') == normalized):
                     user_duels.append(duel)
-            
+
             return {
                 "success": True,
                 "data": user_duels
             }
-        
+
         # Fallback to database
         result = DuelOperations.get_user_duels(username)
         return result

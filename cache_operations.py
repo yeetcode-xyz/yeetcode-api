@@ -416,11 +416,12 @@ def update_duel_in_cache(duel_id: str, updates: Dict) -> bool:
             from aws import DuelOperations
             duels_result = DuelOperations.get_all_duels()
             if not duels_result.get('success'):
-                error("Failed to load duels from DB, cannot update in cache")
-                return False
-            cached_duels = duels_result
+                # Initialize empty cache so we can still add/update duels
+                cached_duels = {"success": True, "data": []}
+            else:
+                cached_duels = duels_result
             # Set in cache for future use
-            cache_manager.set(CacheType.DUELS, cached_duels)
+            cache_manager.set(CacheType.DUELS, cached_duels, ttl=300)
 
         duels = cached_duels.get('data', [])
         duel = next((d for d in duels if d.get('duelId') == duel_id), None)
@@ -500,7 +501,15 @@ def delete_duel_from_cache(duel_id: str) -> bool:
     try:
         cached_duels = cache_manager.get(CacheType.DUELS)
         if not cached_duels or not cached_duels.get('success'):
-            return False
+            # Try loading from DB first
+            from aws import DuelOperations
+            duels_result = DuelOperations.get_all_duels()
+            if duels_result.get('success'):
+                cached_duels = duels_result
+                cache_manager.set(CacheType.DUELS, cached_duels, ttl=300)
+            else:
+                # Nothing to delete from if cache and DB are both empty
+                return True
 
         duels = cached_duels.get('data', [])
         duels = [d for d in duels if d.get('duelId') != duel_id]

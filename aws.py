@@ -1204,12 +1204,38 @@ class DuelOperations:
                 duels = []
             
             return {"success": True, "data": duels}
-            
+
         except Exception as error:
             if DEBUG_MODE:
                 print(f"[ERROR] Failed to get duels: {error}")
             raise error
-    
+
+    @staticmethod
+    def get_all_duels() -> Dict:
+        """Get all duels from DynamoDB (used as fallback when cache is empty)"""
+        try:
+            if not DUELS_TABLE:
+                raise Exception("DUELS_TABLE not configured")
+
+            items = []
+            scan_params = {'TableName': DUELS_TABLE}
+
+            while True:
+                scan_result = ddb.scan(**scan_params)
+                raw_duels = scan_result.get('Items', [])
+                items.extend([normalize_dynamodb_item(duel) for duel in raw_duels])
+
+                if 'LastEvaluatedKey' not in scan_result:
+                    break
+                scan_params['ExclusiveStartKey'] = scan_result['LastEvaluatedKey']
+
+            return {"success": True, "data": items}
+
+        except Exception as error:
+            if DEBUG_MODE:
+                print(f"[ERROR] Failed to get all duels: {error}")
+            return {"success": False, "data": [], "error": str(error)}
+
     @staticmethod
     def create_duel(username: str, opponent: str, problem_slug: str, problem_title: str = None, problem_number: str = None, difficulty: str = None, is_wager: bool = False, wager_amount: int = None) -> Dict:
         """Create a new duel"""
