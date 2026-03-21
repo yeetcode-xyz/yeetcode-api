@@ -104,11 +104,37 @@ async def get_group_stats_endpoint(
 
             return {"success": True, "data": users_in_group}
 
-        # Fallback to database only if cache miss
+        # Cache miss — reload USERS from DynamoDB into cache (normalized), then filter
+        # Do NOT fall back to GroupOperations.get_group_stats() because its GSI query
+        # may not project all attributes (e.g. xp), causing bonus XP to silently return 0.
+        import os as _os
+        from aws import ddb as _ddb, normalize_dynamodb_item as _norm
+        table_name = _os.environ.get('USERS_TABLE', 'Yeetcode_users')
+        scan_result = _ddb.scan(TableName=table_name)
+        normalized = [_norm(u) for u in scan_result.get('Items', [])]
+        cached_users = {"success": True, "data": normalized}
+        cache_manager.set(CacheType.USERS, cached_users)
+
+        users_in_group = []
+        for user in normalized:
+            if user.get('group_id') == group_id:
+                display_name = user.get('display_name', user.get('username', ''))
+                if not display_name or display_name == 'undefined':
+                    display_name = user.get('username', '')
+                users_in_group.append({
+                    'username': user.get('username', ''),
+                    'name': display_name,
+                    'easy': int(user.get('easy', 0) or 0),
+                    'medium': int(user.get('medium', 0) or 0),
+                    'hard': int(user.get('hard', 0) or 0),
+                    'today': int(user.get('today', 0) or 0),
+                    'xp': int(user.get('xp', 0) or 0)
+                })
+
         if DEBUG_MODE:
-            print(f"[DEBUG] Cache miss for group {group_id}, falling back to database")
-        result = GroupOperations.get_group_stats(group_id)
-        return result
+            print(f"[DEBUG] Cache miss: reloaded {len(normalized)} users, returning {len(users_in_group)} for group {group_id}")
+
+        return {"success": True, "data": users_in_group}
     except Exception as error:
         return {"success": False, "error": str(error)}
 
