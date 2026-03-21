@@ -2,6 +2,7 @@
 Duel routes
 """
 
+import asyncio
 from fastapi import APIRouter, Depends
 
 from models import DuelRequest
@@ -12,6 +13,24 @@ from cache_manager import cache_manager, CacheType
 router = APIRouter(tags=["Duels"])
 
 DEBUG_MODE = True
+
+
+def _normalize_duel(duel: dict) -> dict:
+    """Normalize duel fields for a consistent API response.
+
+    Ensures:
+    - isWager is a boolean (DB stores 'Yes' string)
+    - wagerAmount is populated from challengerWager if missing
+    - Duels with null/empty problemSlug are flagged
+    """
+    d = dict(duel)
+    # isWager: stored as 'Yes' string in DynamoDB → coerce to bool
+    if 'isWager' in d:
+        d['isWager'] = d['isWager'] in (True, 'Yes', 'yes')
+    # wagerAmount: derive from challengerWager so frontend has a single field
+    if not d.get('wagerAmount'):
+        d['wagerAmount'] = d.get('challengerWager') or d.get('challengeeWager') or 0
+    return d
 
 
 @router.get("/duels/{username}")
@@ -26,20 +45,25 @@ async def get_user_duels_endpoint(
         # Check cache first for duels
         cached_duels = cache_manager.get(CacheType.DUELS)
         if cached_duels:
-            # Filter duels for this user
             user_duels = []
             for duel in cached_duels.get('data', []):
                 if (duel.get('challenger') == normalized or
                     duel.get('challengee') == normalized):
-                    user_duels.append(duel)
+                    # Skip ghost duels — no valid problem slug
+                    slug = duel.get('problemSlug')
+                    if not slug or slug == 'None':
+                        continue
+                    user_duels.append(_normalize_duel(duel))
 
-            return {
-                "success": True,
-                "data": user_duels
-            }
+            return {"success": True, "data": user_duels}
 
         # Fallback to database
         result = DuelOperations.get_user_duels(username)
+        if result.get('success') and result.get('data'):
+            result['data'] = [
+                _normalize_duel(d) for d in result['data']
+                if d.get('problemSlug') and d.get('problemSlug') != 'None'
+            ]
         return result
     except Exception as error:
         return {"success": False, "error": str(error)}
@@ -52,17 +76,33 @@ async def create_duel_endpoint(
 ):
     """Create a new duel"""
     try:
+        # Auto-assign a random problem if the frontend didn't specify one
+        problem_slug = request.problem_slug
+        problem_title = request.problem_title
+        problem_number = request.problem_number
+        difficulty = request.difficulty
+
+        if not problem_slug:
+            from background_tasks import fetch_random_problem
+            problem = await asyncio.to_thread(fetch_random_problem, difficulty or "EASY")
+            if not problem:
+                return {"success": False, "error": "Could not find a suitable problem — try again"}
+            problem_slug = problem["titleSlug"]
+            problem_title = problem["title"]
+            problem_number = problem["frontendQuestionId"]
+            difficulty = problem["difficulty"]
+
         if DEBUG_MODE:
             wager_info = f", is_wager: {request.is_wager}, wager_amount: {request.wager_amount}" if request.is_wager else ""
-            print(f"[DEBUG] Creating duel - username: {request.username}, opponent: {request.opponent}, problem_slug: {request.problem_slug}, problem_title: {request.problem_title}, problem_number: {request.problem_number}, difficulty: {request.difficulty}{wager_info}")
+            print(f"[DEBUG] Creating duel - username: {request.username}, opponent: {request.opponent}, problem_slug: {problem_slug}, difficulty: {difficulty}{wager_info}")
 
         result = DuelOperations.create_duel(
             request.username,
             request.opponent,
-            request.problem_slug,
-            request.problem_title,
-            request.problem_number,
-            request.difficulty,
+            problem_slug,
+            problem_title,
+            problem_number,
+            difficulty,
             request.is_wager or False,
             request.wager_amount
         )

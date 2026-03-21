@@ -315,7 +315,10 @@ def update_bounty_in_cache(bounty_id: str, username: str, progress: int) -> bool
             bounty['users'] = {}
         bounty['users'][username] = progress
 
-        # Write back to cache
+        # Write back to cache.
+        # WAL data must carry the FULL users dict so that when the cache dumper
+        # writes SET users = :value to DynamoDB it captures all completions,
+        # not just the single user that triggered this call.
         return cache_manager.write(
             cache_type=CacheType.BOUNTIES,
             data=cached_bounties,
@@ -323,7 +326,7 @@ def update_bounty_in_cache(bounty_id: str, username: str, progress: int) -> bool
                 "operation": "UPDATE",
                 "table": BOUNTIES_TABLE,
                 "key": {"bountyId": bounty_id},
-                "data": {"users": {username: progress}}
+                "data": {"users": bounty['users']}
             }
         )
 

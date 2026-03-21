@@ -363,8 +363,12 @@ async def update_bounty_progress():
 # TASK 3: Generate Daily Problem
 # ========================================
 
-def fetch_random_problem() -> Optional[Dict]:
-    """Fetch a random Easy problem from LeetCode"""
+def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
+    """Fetch a random problem from LeetCode by difficulty (EASY/MEDIUM/HARD)"""
+    difficulty_upper = difficulty.upper()
+    # Approximate upper bounds for skip index per difficulty tier
+    max_skip = {"EASY": 700, "MEDIUM": 1400, "HARD": 600}.get(difficulty_upper, 700)
+
     query = """
     query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
       problemsetQuestionList: questionList(
@@ -389,14 +393,14 @@ def fetch_random_problem() -> Optional[Dict]:
     """
 
     for attempt in range(5):
-        skip = random.randint(0, 700)
-        log.info(f"🎲 Attempt {attempt + 1}: skip index {skip}")
+        skip = random.randint(0, max_skip)
+        log.info(f"🎲 Attempt {attempt + 1}: skip index {skip} (difficulty: {difficulty_upper})")
 
         variables = {
             "categorySlug": "",
             "limit": 1,
             "skip": skip,
-            "filters": {"difficulty": "EASY"}
+            "filters": {"difficulty": difficulty_upper}
         }
 
         try:

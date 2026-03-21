@@ -1026,7 +1026,12 @@ class BountyOperations:
             
             # Normalize bounties
             normalized_bounties = [normalize_dynamodb_item(bounty) for bounty in all_bounties]
-            
+
+            # Map 'id' field to 'bountyId' for consistency with get_user_bounties
+            for bounty in normalized_bounties:
+                if 'id' in bounty and 'bountyId' not in bounty:
+                    bounty['bountyId'] = bounty['id']
+
             return {"success": True, "data": normalized_bounties}
             
         except Exception as error:
