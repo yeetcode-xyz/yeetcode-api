@@ -455,6 +455,7 @@ async def generate_daily_problem():
             "date": {"S": date},
             "slug": {"S": problem["titleSlug"]},
             "title": {"S": problem["title"]},
+            "difficulty": {"S": problem.get("difficulty", "Easy")},
             "frontendId": {"S": problem["frontendQuestionId"]},
             "tags": {"SS": tags},
             "users": {"M": {}}

@@ -701,7 +701,7 @@ class DailyProblemOperations:
                             'title': normalized_item.get('title'),
                             'frontendId': normalized_item.get('frontendId'),
                             'topicTags': normalized_item.get('tags', []),  # Frontend expects topicTags
-                            'difficulty': normalized_item.get('difficulty', 'Medium'),  # Default difficulty
+                            'difficulty': normalized_item.get('difficulty', 'Easy'),
                             'content': normalized_item.get('content', ''),  # Problem description
                             'users': normalized_item.get('users', {})
                         }
@@ -912,7 +912,7 @@ class DailyProblemOperations:
                             'title': normalized_item.get('title'),
                             'frontendId': normalized_item.get('frontendId'),
                             'topicTags': normalized_item.get('tags', []),
-                            'difficulty': normalized_item.get('difficulty', 'Medium'),
+                            'difficulty': normalized_item.get('difficulty', 'Easy'),
                             'content': normalized_item.get('content', ''),
                             'users': normalized_item.get('users', {})
                         }
