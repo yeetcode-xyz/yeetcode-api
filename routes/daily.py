@@ -2,6 +2,7 @@
 Daily problem routes
 """
 
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
 
 from models import DailyProblemRequest
@@ -75,11 +76,25 @@ async def get_daily_problem_endpoint(
                 cache_manager.set(CacheType.USER_DAILY_DATA, user_data, username)
                 print(f"[CACHE] Cached user daily data for {username}")
             
+            # Validate streak: if last_completed_date is more than 1 day ago, streak is broken
+            streak = user_data.get('streak', 0)
+            if streak > 0:
+                last_completed = user_data.get('last_completed_date')
+                if last_completed:
+                    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
+                    if last_completed != today and last_completed != yesterday:
+                        streak = 0
+                        print(f"[STREAK] Reset stale streak for {username}: last_completed={last_completed}")
+                else:
+                    # No last_completed_date but streak > 0 — invalid
+                    streak = 0
+
             return {
                 "success": True,
                 "data": {
                     "dailyComplete": user_completed,
-                    "streak": user_data.get('streak', 0),
+                    "streak": streak,
                     "todaysProblem": problem_data,
                     "error": None,
                 }

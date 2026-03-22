@@ -1350,19 +1350,38 @@ class DuelOperations:
 
             normalized_username = username.lower()
 
-            # Get duel details to check if it's a wager duel
-            get_params = {
-                'TableName': DUELS_TABLE,
-                'Key': {'duelId': {'S': duel_id}}
-            }
-            get_result = ddb.get_item(**get_params)
+            # CACHE-FIRST: Check cache before DynamoDB (duels created via cache+WAL
+            # may not be in DB yet if the 10-min sync hasn't run)
+            from cache_manager import cache_manager, CacheType
+            is_wager = False
+            challenger_wager = 0
+            duel_found = False
 
-            if 'Item' not in get_result:
-                raise Exception("Duel not found")
+            cached_duels = cache_manager.get(CacheType.DUELS)
+            if cached_duels and cached_duels.get('success'):
+                cached_duel = next(
+                    (d for d in cached_duels.get('data', []) if d.get('duelId') == duel_id),
+                    None
+                )
+                if cached_duel:
+                    duel_found = True
+                    is_wager = cached_duel.get('isWager') == 'Yes'
+                    challenger_wager = int(cached_duel.get('challengerWager', 0)) if is_wager else 0
 
-            duel_item = get_result['Item']
-            is_wager = duel_item.get('isWager', {}).get('S') == 'Yes'
-            challenger_wager = int(duel_item.get('challengerWager', {}).get('N', 0)) if is_wager else 0
+            if not duel_found:
+                # Fall back to DynamoDB
+                get_params = {
+                    'TableName': DUELS_TABLE,
+                    'Key': {'duelId': {'S': duel_id}}
+                }
+                get_result = ddb.get_item(**get_params)
+
+                if 'Item' not in get_result:
+                    raise Exception("Duel not found")
+
+                duel_item = get_result['Item']
+                is_wager = duel_item.get('isWager', {}).get('S') == 'Yes'
+                challenger_wager = int(duel_item.get('challengerWager', {}).get('N', 0)) if is_wager else 0
 
             # Validate wager duel acceptance
             if is_wager:
@@ -1425,20 +1444,39 @@ class DuelOperations:
 
             normalized_username = username.lower()
 
-            # First get the duel to determine if user is challenger or challengee
-            get_params = {
-                'TableName': DUELS_TABLE,
-                'Key': {'duelId': {'S': duel_id}}
-            }
-            
-            response = ddb.get_item(**get_params)
-            if 'Item' not in response:
-                raise Exception("Duel not found")
-            
-            duel = response['Item']
-            challenger = duel.get('challenger', {}).get('S')
-            challengee = duel.get('challengee', {}).get('S')
-            
+            # CACHE-FIRST: Check cache before DynamoDB
+            from cache_manager import cache_manager, CacheType
+            challenger = None
+            challengee = None
+            has_start_time = False
+            duel_found = False
+
+            cached_duels = cache_manager.get(CacheType.DUELS)
+            if cached_duels and cached_duels.get('success'):
+                cached_duel = next(
+                    (d for d in cached_duels.get('data', []) if d.get('duelId') == duel_id),
+                    None
+                )
+                if cached_duel:
+                    duel_found = True
+                    challenger = cached_duel.get('challenger')
+                    challengee = cached_duel.get('challengee')
+                    has_start_time = bool(cached_duel.get('startTime'))
+
+            if not duel_found:
+                # Fall back to DynamoDB
+                get_params = {
+                    'TableName': DUELS_TABLE,
+                    'Key': {'duelId': {'S': duel_id}}
+                }
+                response = ddb.get_item(**get_params)
+                if 'Item' not in response:
+                    raise Exception("Duel not found")
+                duel = response['Item']
+                challenger = duel.get('challenger', {}).get('S')
+                challengee = duel.get('challengee', {}).get('S')
+                has_start_time = bool(duel.get('startTime', {}).get('S'))
+
             # Determine which time field to update and which start time field to set
             current_time = datetime.now(timezone.utc).isoformat()
             if normalized_username == challenger:
@@ -1449,7 +1487,7 @@ class DuelOperations:
                 start_time_field = 'challengeeStartTime'
             else:
                 raise Exception("User is not part of this duel")
-            
+
             # CACHE-FIRST: Update duel in cache
             from cache_operations import update_duel_in_cache
             updates = {
@@ -1458,7 +1496,7 @@ class DuelOperations:
                 'status': 'ACTIVE'
             }
             # Only set global startTime if it doesn't exist yet
-            if 'startTime' not in duel or not duel.get('startTime', {}).get('S'):
+            if not has_start_time:
                 updates['startTime'] = current_time
 
             success = update_duel_in_cache(duel_id, updates)
