@@ -1564,48 +1564,80 @@ class DuelOperations:
 
             normalized_username = username.lower()
 
-            # Get current duel details
-            get_params = {
-                'TableName': DUELS_TABLE,
-                'Key': {'duelId': {'S': duel_id}}
-            }
-            
-            get_result = ddb.get_item(**get_params)
-            if 'Item' not in get_result:
-                return {"success": False, "error": "Duel not found"}
-            
-            duel_item = get_result['Item']
-            challenger = duel_item.get('challenger', {}).get('S')
-            challengee = duel_item.get('challengee', {}).get('S')
-            current_status = duel_item.get('status', {}).get('S')
-            difficulty = duel_item.get('difficulty', {}).get('S', 'Medium')  # Default to Medium if not set
-            is_wager = duel_item.get('isWager', {}).get('S') == 'Yes'
-            challenger_wager = int(duel_item.get('challengerWager', {}).get('N', 0)) if is_wager else 0
-            challengee_wager = int(duel_item.get('challengeeWager', {}).get('N', 0)) if is_wager else 0
-            
+            # CACHE-FIRST: Check cache before DynamoDB
+            from cache_manager import cache_manager, CacheType
+            challenger = None
+            challengee = None
+            current_status = None
+            difficulty = 'Medium'
+            is_wager = False
+            challenger_wager = 0
+            challengee_wager = 0
+            current_challenger_time = None
+            current_challengee_time = None
+            challenger_start = None
+            challengee_start = None
+            duel_found = False
+
+            cached_duels = cache_manager.get(CacheType.DUELS)
+            if cached_duels and cached_duels.get('success'):
+                cached_duel = next(
+                    (d for d in cached_duels.get('data', []) if d.get('duelId') == duel_id),
+                    None
+                )
+                if cached_duel:
+                    duel_found = True
+                    challenger = cached_duel.get('challenger')
+                    challengee = cached_duel.get('challengee')
+                    current_status = cached_duel.get('status')
+                    difficulty = cached_duel.get('difficulty', 'Medium')
+                    is_wager = cached_duel.get('isWager') == 'Yes' or cached_duel.get('isWager') is True
+                    challenger_wager = int(cached_duel.get('challengerWager', 0) or 0) if is_wager else 0
+                    challengee_wager = int(cached_duel.get('challengeeWager', 0) or 0) if is_wager else 0
+                    ct = cached_duel.get('challengerTime')
+                    current_challenger_time = str(ct) if ct is not None else None
+                    ce = cached_duel.get('challengeeTime')
+                    current_challengee_time = str(ce) if ce is not None else None
+                    challenger_start = cached_duel.get('challengerStartTime')
+                    challengee_start = cached_duel.get('challengeeStartTime')
+
+            if not duel_found:
+                # Fall back to DynamoDB
+                get_params = {
+                    'TableName': DUELS_TABLE,
+                    'Key': {'duelId': {'S': duel_id}}
+                }
+                get_result = ddb.get_item(**get_params)
+                if 'Item' not in get_result:
+                    return {"success": False, "error": "Duel not found"}
+
+                duel_item = get_result['Item']
+                challenger = duel_item.get('challenger', {}).get('S')
+                challengee = duel_item.get('challengee', {}).get('S')
+                current_status = duel_item.get('status', {}).get('S')
+                difficulty = duel_item.get('difficulty', {}).get('S', 'Medium')
+                is_wager = duel_item.get('isWager', {}).get('S') == 'Yes'
+                challenger_wager = int(duel_item.get('challengerWager', {}).get('N', 0)) if is_wager else 0
+                challengee_wager = int(duel_item.get('challengeeWager', {}).get('N', 0)) if is_wager else 0
+                current_challenger_time = duel_item.get('challengerTime', {}).get('N')
+                current_challengee_time = duel_item.get('challengeeTime', {}).get('N')
+                challenger_start = duel_item.get('challengerStartTime', {}).get('S')
+                challengee_start = duel_item.get('challengeeStartTime', {}).get('S')
+
             # Don't allow submissions on already completed duels
             if current_status == 'COMPLETED':
                 return {"success": False, "error": "Duel already completed"}
-            
+
             # Determine if user is challenger or challengee
             is_challenger = normalized_username == challenger
             if not is_challenger and normalized_username != challengee:
                 return {"success": False, "error": "User not part of this duel"}
-            
-            # Get existing times AAAAAAAAAAAAAAAAAAAA
-            current_challenger_time = duel_item.get('challengerTime', {}).get('N')
-            current_challengee_time = duel_item.get('challengeeTime', {}).get('N')
-            
+
             # Don't overwrite if user already has a time recorded
             if is_challenger and current_challenger_time and current_challenger_time != '0':
                 return {"success": False, "error": "Challenger time already recorded"}
             if not is_challenger and current_challengee_time and current_challengee_time != '0':
                 return {"success": False, "error": "Challengee time already recorded"}
-            
-            # Note: elapsed_ms passed from frontend is not reliable, we'll calculate it ourselves
-            # Get the user's individual start time
-            challenger_start = duel_item.get('challengerStartTime', {}).get('S')
-            challengee_start = duel_item.get('challengeeStartTime', {}).get('S')
             
             # Calculate actual elapsed time based on individual start times
             current_timestamp = datetime.now(timezone.utc)
