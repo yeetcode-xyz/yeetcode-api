@@ -159,6 +159,23 @@ class WALManager:
                                     mark_dirty=True
                                 )
 
+                                # Edge case: if this is a streak update for a user,
+                                # also seed USER_DAILY_DATA so a cold restart doesn't
+                                # fall back to stale DynamoDB values for streak reads.
+                                if (cache_type == 'users'
+                                        and 'username' in key
+                                        and ('streak' in data or 'last_completed_date' in data)):
+                                    streak_data = {
+                                        'streak': data.get('streak', 0),
+                                        'last_completed_date': data.get('last_completed_date')
+                                    }
+                                    cache_manager._write_to_cache_internal(
+                                        cache_type='user_daily_data',
+                                        data=streak_data,
+                                        identifier=key['username'],
+                                        mark_dirty=False
+                                    )
+
                                 replayed += 1
 
                         except json.JSONDecodeError as e:
