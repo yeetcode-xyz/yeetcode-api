@@ -33,31 +33,38 @@ BOUNTIES_TABLE = os.environ.get("BOUNTIES_TABLE", "Bounties")
 ddb = boto3.client("dynamodb", region_name=AWS_REGION)
 
 
+_DDB_TYPES = {"S", "N", "BOOL", "M", "L", "SS", "NS", "BS", "NULL"}
+
+
+def _is_ddb_typed(v):
+    return isinstance(v, dict) and len(v) == 1 and next(iter(v)) in _DDB_TYPES
+
+
+def _norm_value(v):
+    """Normalize a single DynamoDB typed value to a plain Python value."""
+    if not _is_ddb_typed(v):
+        return v
+    type_key = next(iter(v))
+    if type_key == "S":
+        return v["S"]
+    elif type_key == "N":
+        return int(float(v["N"]))
+    elif type_key == "BOOL":
+        return v["BOOL"]
+    elif type_key == "M":
+        return normalize(v["M"])
+    elif type_key == "L":
+        return [_norm_value(i) for i in v["L"]]
+    elif type_key == "SS":
+        return list(v["SS"])
+    elif type_key == "NULL":
+        return None
+    return v
+
+
 def normalize(item):
-    """Recursively normalize DynamoDB typed values to Python values."""
-    result = {}
-    for k, v in item.items():
-        if "S" in v:
-            result[k] = v["S"]
-        elif "N" in v:
-            result[k] = int(float(v["N"]))
-        elif "BOOL" in v:
-            result[k] = v["BOOL"]
-        elif "M" in v:
-            result[k] = normalize(v["M"])
-        elif "L" in v:
-            def _norm_list_item(i):
-                if isinstance(i, dict) and len(i) == 1 and list(i.keys())[0] in ("S","N","BOOL","M","L","SS","NULL"):
-                    return normalize(i)
-                return i
-            result[k] = [_norm_list_item(i) for i in v["L"]]
-        elif "SS" in v:
-            result[k] = list(v["SS"])
-        elif "NULL" in v:
-            result[k] = None
-        else:
-            result[k] = v
-    return result
+    """Recursively normalize a DynamoDB item (dict of typed values) to plain Python."""
+    return {k: _norm_value(v) for k, v in item.items()}
 
 
 def scan_all(table_name):
