@@ -46,7 +46,11 @@ def normalize(item):
         elif "M" in v:
             result[k] = normalize(v["M"])
         elif "L" in v:
-            result[k] = [normalize(i) if isinstance(i, dict) else i for i in v["L"]]
+            def _norm_list_item(i):
+                if isinstance(i, dict) and len(i) == 1 and list(i.keys())[0] in ("S","N","BOOL","M","L","SS","NULL"):
+                    return normalize(i)
+                return i
+            result[k] = [_norm_list_item(i) for i in v["L"]]
         elif "SS" in v:
             result[k] = list(v["SS"])
         elif "NULL" in v:
