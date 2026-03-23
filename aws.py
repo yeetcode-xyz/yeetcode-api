@@ -1001,9 +1001,8 @@ class DuelOperations:
             is_wager         = bool(duel.get("is_wager"))
             challenger_wager = int(duel.get("challenger_wager") or 0)
 
-            if is_wager:
-                if not opponent_wager:
-                    raise Exception("Opponent must specify their wager amount")
+            # Wager validation is optional at accept time — challengee can set their wager when starting
+            if is_wager and opponent_wager:
                 min_wager = max(25, int(challenger_wager * 0.75))
                 if opponent_wager < min_wager:
                     raise Exception(f"Opponent wager must be at least {min_wager} XP")
