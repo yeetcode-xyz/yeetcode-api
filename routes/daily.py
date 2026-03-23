@@ -2,17 +2,13 @@
 Daily problem routes
 """
 
-from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends
 
 from models import DailyProblemRequest
 from auth import verify_api_key
 from aws import DailyProblemOperations
-from cache_manager import cache_manager, CacheType
 
 router = APIRouter(tags=["Daily Problems"])
-
-DEBUG_MODE = True
 
 
 @router.get("/daily-problem/{username}")
@@ -22,90 +18,10 @@ async def get_daily_problem_endpoint(
 ):
     """Get daily problem data for a user"""
     try:
-        print(f"[DEBUG] Getting daily problem for user: {username}")
-        
-        # Check cache first for daily problem
-        cached_problem = cache_manager.get(CacheType.DAILY_PROBLEM)
-        cached_completions = cache_manager.get(CacheType.DAILY_COMPLETIONS)
-        
-        print(f"[DEBUG] Cached problem: {'Found' if cached_problem else 'Not found'}")
-        print(f"[DEBUG] Cached completions: {'Found' if cached_completions else 'Not found'}")
-        
-        if cached_problem:
-            # Have cached problem - extract the actual problem data
-            problem_data = cached_problem.get('data') if isinstance(cached_problem, dict) and 'data' in cached_problem else cached_problem
-
-            # Check or create completions cache
-            if cached_completions:
-                completions_data = cached_completions
-            else:
-                # Create completions data from the cached problem
-                print("[DEBUG] Populating missing completions cache")
-                completions_data = {
-                    "success": True,
-                    "data": {
-                        "users": problem_data.get('users', {}) if problem_data else {},
-                        "problem_date": problem_data.get('date') if problem_data else None
-                    }
-                }
-                # Cache the completions
-                cache_manager.set(CacheType.DAILY_COMPLETIONS, completions_data)
-            
-            # Check if user completed today's problem
-            users_data = completions_data.get('data', {}).get('users', {})
-            user_completed = False
-            if username in users_data:
-                user_completion = users_data[username]
-                # Handle both boolean and nested boolean structure
-                if isinstance(user_completion, bool):
-                    user_completed = user_completion
-                elif isinstance(user_completion, dict) and user_completion.get('BOOL'):
-                    user_completed = user_completion['BOOL']
-                else:
-                    user_completed = True  # Default to true if user exists in the users field
-            
-            # Check cache for user's streak data
-            cached_user_data = cache_manager.get(CacheType.USER_DAILY_DATA, username)
-            if cached_user_data:
-                # Use cached user data
-                user_data = cached_user_data
-                print(f"[CACHE] Using cached user daily data for {username}")
-            else:
-                # Get user's streak from database and cache it
-                user_data = DailyProblemOperations.get_user_daily_data(username)
-                cache_manager.set(CacheType.USER_DAILY_DATA, user_data, username)
-                print(f"[CACHE] Cached user daily data for {username}")
-            
-            # Validate streak: if last_completed_date is more than 1 day ago, streak is broken
-            streak = user_data.get('streak', 0)
-            if streak > 0:
-                last_completed = user_data.get('last_completed_date')
-                if last_completed:
-                    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
-                    if last_completed != today and last_completed != yesterday:
-                        streak = 0
-                        print(f"[STREAK] Reset stale streak for {username}: last_completed={last_completed}")
-                else:
-                    # No last_completed_date but streak > 0 — invalid
-                    streak = 0
-
-            return {
-                "success": True,
-                "data": {
-                    "dailyComplete": user_completed,
-                    "streak": streak,
-                    "todaysProblem": problem_data,
-                    "error": None,
-                }
-            }
-        
-        # Fallback to database if cache miss
         result = DailyProblemOperations.get_daily_problem_data(username)
         return result
-        
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/complete-daily-problem")
@@ -115,35 +31,22 @@ async def complete_daily_problem_endpoint(
 ):
     """Mark daily problem as completed for a user"""
     try:
-        # Complete the problem in database
         result = DailyProblemOperations.complete_daily_problem(request.username)
-
-        # NOTE: No cache invalidation - complete_daily_in_cache() uses cache-first writes
-        # DAILY_PROBLEM, DAILY_COMPLETIONS, and USER_DAILY_DATA caches are all updated in-place
-        # Invalidating would destroy uncommitted streak/XP data before WAL can sync to DB
-        # Let cache TTL handle expiration naturally
-
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/top-daily-problems")
 async def get_top_daily_problems_endpoint(
     api_key: str = Depends(verify_api_key)
 ):
-    """Get top 2 daily problems for caching"""
+    """Get top 2 daily problems"""
     try:
-        # Check cache first
-        cached_problems = cache_manager.get(CacheType.DAILY_PROBLEM)
-        if cached_problems:
-            return {"success": True, "data": [cached_problems]}
-        
-        # Fallback to database
         result = DailyProblemOperations.get_top_daily_problems()
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/daily-completions")
@@ -152,13 +55,7 @@ async def get_daily_completions_endpoint(
 ):
     """Get today's daily problem completions"""
     try:
-        # Check cache first
-        cached_completions = cache_manager.get(CacheType.DAILY_COMPLETIONS)
-        if cached_completions:
-            return cached_completions
-        
-        # Fallback to database
         result = DailyProblemOperations.get_todays_completions()
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}

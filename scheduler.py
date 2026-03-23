@@ -13,19 +13,17 @@ from datetime import datetime
 from background_tasks import (
     update_user_stats,
     update_bounty_progress,
-    generate_daily_problem
+    generate_daily_problem,
 )
 from aws import DuelOperations
-from cache_dumper import dump_cache_to_db
+from backup import backup_to_s3
 
 log = logging.getLogger(__name__)
 
-# Global scheduler instance
 scheduler: AsyncIOScheduler = None
 
 
 def create_scheduler() -> AsyncIOScheduler:
-    """Create and configure the scheduler"""
     global scheduler
 
     if scheduler is not None:
@@ -33,14 +31,14 @@ def create_scheduler() -> AsyncIOScheduler:
 
     scheduler = AsyncIOScheduler()
 
-    # Task 1: Update user stats every 1 minute (FASTER POLLING!)
+    # Task 1: Update user stats every 1 minute
     scheduler.add_job(
         update_user_stats,
         trigger=IntervalTrigger(minutes=1),
-        id='update_user_stats',
-        name='Update User Stats',
+        id="update_user_stats",
+        name="Update User Stats",
         replace_existing=True,
-        max_instances=1,  # Prevent overlapping runs
+        max_instances=1,
     )
     log.info("✅ Scheduled: Update user stats (every 1 minute)")
 
@@ -48,8 +46,8 @@ def create_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(
         update_bounty_progress,
         trigger=IntervalTrigger(minutes=5),
-        id='update_bounty_progress',
-        name='Update Bounty Progress',
+        id="update_bounty_progress",
+        name="Update Bounty Progress",
         replace_existing=True,
         max_instances=1,
     )
@@ -58,41 +56,40 @@ def create_scheduler() -> AsyncIOScheduler:
     # Task 3: Generate daily problem at 00:00 UTC daily
     scheduler.add_job(
         generate_daily_problem,
-        trigger=CronTrigger(hour=0, minute=0, timezone='UTC'),
-        id='generate_daily_problem',
-        name='Generate Daily Problem',
+        trigger=CronTrigger(hour=0, minute=0, timezone="UTC"),
+        id="generate_daily_problem",
+        name="Generate Daily Problem",
         replace_existing=True,
         max_instances=1,
     )
     log.info("✅ Scheduled: Generate daily problem (00:00 UTC daily)")
 
-    # Task 4: Dump cache to DynamoDB every 10 minutes (NEW!)
-    scheduler.add_job(
-        dump_cache_to_db,
-        trigger=IntervalTrigger(minutes=10),
-        id='dump_cache_to_db',
-        name='Dump Cache to DynamoDB',
-        replace_existing=True,
-        max_instances=1,
-    )
-    log.info("✅ Scheduled: Dump cache to DynamoDB (every 10 minutes)")
-
-    # Task 5: Clean up expired/pending duels every 10 minutes
+    # Task 4: Clean up expired/pending duels every 10 minutes
     scheduler.add_job(
         DuelOperations.cleanup_expired_duels,
         trigger=IntervalTrigger(minutes=10),
-        id='cleanup_expired_duels',
-        name='Clean Up Expired Duels',
+        id="cleanup_expired_duels",
+        name="Clean Up Expired Duels",
         replace_existing=True,
         max_instances=1,
     )
     log.info("✅ Scheduled: Clean up expired duels (every 10 minutes)")
 
+    # Task 5: Daily SQLite → S3 backup at 03:00 UTC
+    scheduler.add_job(
+        backup_to_s3,
+        trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="backup_to_s3",
+        name="SQLite S3 Backup",
+        replace_existing=True,
+        max_instances=1,
+    )
+    log.info("✅ Scheduled: SQLite S3 backup (03:00 UTC daily)")
+
     return scheduler
 
 
 def start_scheduler():
-    """Start the background task scheduler"""
     global scheduler
 
     if scheduler is None:
@@ -101,17 +98,13 @@ def start_scheduler():
     if not scheduler.running:
         scheduler.start()
         log.info("🚀 Background task scheduler started")
-
-        # Log scheduled jobs
-        jobs = scheduler.get_jobs()
-        for job in jobs:
+        for job in scheduler.get_jobs():
             log.info(f"   📋 Job: {job.name} (ID: {job.id}) - Next run: {job.next_run_time}")
     else:
         log.info("⚠️ Scheduler already running")
 
 
 def stop_scheduler():
-    """Stop the background task scheduler"""
     global scheduler
 
     if scheduler is not None and scheduler.running:
@@ -122,32 +115,24 @@ def stop_scheduler():
 
 
 def get_scheduler_status() -> dict:
-    """Get the current status of the scheduler"""
     global scheduler
 
     if scheduler is None:
-        return {
-            "running": False,
-            "jobs": []
-        }
+        return {"running": False, "jobs": []}
 
     jobs = []
     for job in scheduler.get_jobs():
         jobs.append({
-            "id": job.id,
-            "name": job.name,
+            "id":            job.id,
+            "name":          job.name,
             "next_run_time": str(job.next_run_time) if job.next_run_time else None,
-            "trigger": str(job.trigger),
+            "trigger":       str(job.trigger),
         })
 
-    return {
-        "running": scheduler.running,
-        "jobs": jobs
-    }
+    return {"running": scheduler.running, "jobs": jobs}
 
 
 async def trigger_job_manually(job_id: str) -> dict:
-    """Manually trigger a scheduled job"""
     global scheduler
 
     if scheduler is None:
@@ -158,26 +143,20 @@ async def trigger_job_manually(job_id: str) -> dict:
         return {"success": False, "error": f"Job '{job_id}' not found"}
 
     try:
-        # Run the job function directly
-        if job_id == 'update_user_stats':
+        if job_id == "update_user_stats":
             await update_user_stats()
-        elif job_id == 'update_bounty_progress':
+        elif job_id == "update_bounty_progress":
             await update_bounty_progress()
-        elif job_id == 'generate_daily_problem':
+        elif job_id == "generate_daily_problem":
             await generate_daily_problem()
-        elif job_id == 'dump_cache_to_db':
-            await dump_cache_to_db()
-        elif job_id == 'cleanup_expired_duels':
+        elif job_id == "cleanup_expired_duels":
             DuelOperations.cleanup_expired_duels()
+        elif job_id == "backup_to_s3":
+            backup_to_s3()
         else:
             return {"success": False, "error": f"Unknown job ID: {job_id}"}
 
-        return {
-            "success": True,
-            "message": f"Job '{job.name}' executed successfully",
-            "job_id": job_id
-        }
+        return {"success": True, "message": f"Job '{job.name}' executed successfully", "job_id": job_id}
     except Exception as e:
         log.error(f"Error executing job {job_id}: {e}")
         return {"success": False, "error": str(e)}
-

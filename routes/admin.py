@@ -3,17 +3,21 @@ Admin routes for YeetCode FastAPI server
 Provides endpoints for managing background tasks and system operations
 """
 
-from fastapi import APIRouter, Depends, Request, HTTPException, Query
+import os
+import logging
+import sqlite3
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
+
 from auth import verify_api_key
 from scheduler import get_scheduler_status, trigger_job_manually
-import logging
-import os
-from datetime import datetime
+from db import DB_PATH
 
 router = APIRouter(tags=["Admin"], prefix="/admin")
 
-# Simple query parameter authentication for browser access
+
 def verify_api_key_query(api_key: str = Query(...)):
     """Verify API key from query parameter for browser-friendly endpoints"""
     expected_key = os.getenv("YETCODE_API_KEY")
@@ -22,6 +26,7 @@ def verify_api_key_query(api_key: str = Query(...)):
     if api_key != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
     return api_key
+
 
 # In-memory log storage (limited to last 500 entries)
 log_buffer = []
@@ -40,14 +45,12 @@ class AdminLogHandler(logging.Handler):
                 "logger": record.name
             }
             log_buffer.append(log_entry)
-            # Keep only the last MAX_LOGS entries
             if len(log_buffer) > MAX_LOGS:
                 log_buffer.pop(0)
         except Exception:
             self.handleError(record)
 
 
-# Add the handler to the background_tasks logger
 background_logger = logging.getLogger("background_tasks")
 admin_handler = AdminLogHandler()
 admin_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
@@ -62,8 +65,8 @@ async def get_scheduler_status_endpoint(
     try:
         status = get_scheduler_status()
         return {"success": True, "data": status}
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/trigger/stats-update")
@@ -74,8 +77,8 @@ async def trigger_stats_update(
     try:
         result = await trigger_job_manually('update_user_stats')
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/trigger/bounty-update")
@@ -86,8 +89,8 @@ async def trigger_bounty_update(
     try:
         result = await trigger_job_manually('update_bounty_progress')
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/trigger/daily-problem")
@@ -98,18 +101,15 @@ async def trigger_daily_problem(
     try:
         result = await trigger_job_manually('generate_daily_problem')
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.get("/logs", response_class=HTMLResponse)
 async def serve_log_viewer(
     api_key: str = Depends(verify_api_key_query)
 ):
-    """Serve the interactive log viewer for fastapi.log
-
-    Access via: /admin/logs?api_key=YOUR_API_KEY
-    """
+    """Serve the interactive log viewer"""
     try:
         html_path = os.path.join(os.path.dirname(__file__), "../static/log_viewer.html")
 
@@ -121,9 +121,9 @@ async def serve_log_viewer(
 
         with open(html_path, "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
-    except Exception as error:
+    except Exception as e:
         return HTMLResponse(
-            content=f"<h1>Error loading log viewer</h1><p>{str(error)}</p>",
+            content=f"<h1>Error loading log viewer</h1><p>{str(e)}</p>",
             status_code=500
         )
 
@@ -132,16 +132,10 @@ async def serve_log_viewer(
 async def get_log_content(
     api_key: str = Depends(verify_api_key_query)
 ):
-    """Get the raw log file content (fastapi.log for prod, fastapi-dev.log for dev)
-
-    Access via: /admin/logs/content?api_key=YOUR_API_KEY
-    """
+    """Get the raw log file content"""
     try:
-        # Determine which log file to use based on environment
         port = os.getenv("PORT", "6969")
         log_filename = "fastapi-dev.log" if port == "42069" else "fastapi.log"
-
-        # Log file is in the parent directory (scripts/fastapi/../)
         log_path = os.path.join(os.path.dirname(__file__), f"../{log_filename}")
 
         if not os.path.exists(log_path):
@@ -151,85 +145,49 @@ async def get_log_content(
             content = f.read()
 
         return {"success": True, "content": content, "path": log_path}
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
-@router.get("/cache/status")
-async def get_cache_status(
+@router.get("/db/status")
+async def get_db_status(
     api_key: str = Depends(verify_api_key_query)
 ):
-    """Get comprehensive cache status including all entries and WAL stats
+    """Get SQLite database stats
 
-    Access via: /admin/cache/status?api_key=YOUR_API_KEY
-
-    Returns:
-        - Cache stats (size, hit rate, entries per type)
-        - WAL stats (entries, checkpoint, file size)
-        - Sample of cache entries (keys only, for privacy)
-        - Dirty entries count
+    Access via: /admin/db/status?api_key=YOUR_API_KEY
     """
     try:
-        from cache_manager import cache_manager
-        from wal_manager import wal_manager
+        db_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else 0
 
-        # Get cache stats
-        cache_stats = cache_manager.get_cache_stats()
-
-        # Get WAL stats
-        wal_stats = wal_manager.get_stats()
-
-        # Get dirty entries info (without exposing data)
-        dirty_entries = cache_manager.get_dirty_entries()
-        dirty_summary = []
-        for entry in dirty_entries:
-            dirty_summary.append({
-                "cache_type": entry.get('cache_type'),
-                "identifier": entry.get('identifier', '(no identifier)'),
-                "timestamp": entry.get('timestamp'),
-                "last_synced": entry.get('last_synced')
-            })
-
-        # Get cache keys by type (for debugging)
-        # Note: Accessing _cache directly for admin debugging only
-        # TODO: Add public method to CacheManager for proper encapsulation
-        cache_keys_by_type = {}
-        for cache_type in ["users", "duels", "bounties", "daily_problem", "daily_completions", "user_daily_data"]:
-            keys = [k for k in cache_manager._cache.keys() if k.startswith(f"{cache_type}:")]
-            cache_keys_by_type[cache_type] = {
-                "count": len(keys),
-                "sample_keys": keys[:5]  # Only show first 5 for privacy
-            }
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        table_counts = {}
+        for table in ["users", "daily_problems", "daily_completions", "bounties", "bounty_progress", "duels", "verification_codes", "groups"]:
+            row = conn.execute(f"SELECT COUNT(*) as n FROM {table}").fetchone()
+            table_counts[table] = row["n"]
+        conn.close()
 
         return {
             "success": True,
             "data": {
-                "cache": cache_stats,
-                "wal": wal_stats,
-                "dirty_entries": {
-                    "count": len(dirty_entries),
-                    "entries": dirty_summary[:10]  # Only show first 10
-                },
-                "cache_keys_by_type": cache_keys_by_type,
-                "timestamp": datetime.utcnow().isoformat()
+                "db_path":     DB_PATH,
+                "db_size_mb":  round(db_size / 1024 / 1024, 2),
+                "table_counts": table_counts,
+                "timestamp":   datetime.utcnow().isoformat()
             }
         }
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
-@router.post("/cache/dump")
-async def trigger_cache_dump(
-    api_key: str = Depends(verify_api_key_query)
+@router.post("/trigger/backup")
+async def trigger_backup(
+    api_key: str = Depends(verify_api_key)
 ):
-    """Manually trigger cache dump to DynamoDB
-
-    Access via: POST /admin/cache/dump?api_key=YOUR_API_KEY
-    """
+    """Manually trigger S3 backup"""
     try:
-        from cache_dumper import dump_cache_to_db
-        result = await dump_cache_to_db()
-        # dump_cache_to_db already returns {"success": ..., ...}, don't double-wrap
+        result = await trigger_job_manually('backup_to_s3')
         return result
-    except Exception as error:
-        return {"success": False, "error": str(error)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
