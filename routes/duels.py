@@ -57,7 +57,7 @@ async def create_duel_endpoint(
         # Auto-assign a random problem if the frontend didn't specify one
         if not problem_slug:
             from background_tasks import fetch_random_problem
-            problem = await asyncio.to_thread(fetch_random_problem, difficulty or "EASY")
+            problem = await asyncio.to_thread(fetch_random_problem)
             if not problem:
                 return {"success": False, "error": "Could not find a suitable problem — try again"}
             problem_slug   = problem["titleSlug"]
