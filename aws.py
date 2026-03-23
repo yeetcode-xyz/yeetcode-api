@@ -1001,14 +1001,13 @@ class DuelOperations:
             is_wager         = bool(duel.get("is_wager"))
             challenger_wager = int(duel.get("challenger_wager") or 0)
 
-            # Wager validation is optional at accept time — challengee can set their wager when starting
-            if is_wager and opponent_wager:
-                min_wager = max(25, int(challenger_wager * 0.75))
-                if opponent_wager < min_wager:
-                    raise Exception(f"Opponent wager must be at least {min_wager} XP")
+            # Symmetric wager model: challengee always stakes the same amount as challenger
+            challengee_wager = 0
+            if is_wager and challenger_wager > 0:
+                challengee_wager = challenger_wager
                 opp_data = UserOperations.get_user_data(norm_user)
-                if not opp_data or _calc_total_xp(opp_data) < opponent_wager:
-                    raise Exception(f"Opponent has insufficient XP")
+                if not opp_data or _calc_total_xp(opp_data) < challengee_wager:
+                    raise Exception(f"You need at least {challengee_wager} XP to accept this wager duel")
 
             conn.execute(
                 """
@@ -1016,7 +1015,7 @@ class DuelOperations:
                 SET status = 'ACCEPTED', accepted_at = ?, challengee_wager = ?
                 WHERE duel_id = ?
                 """,
-                [now_iso, opponent_wager or 0, duel_id],
+                [now_iso, challengee_wager, duel_id],
             )
             conn.commit()
             duel_action(f"User {username} accepted duel {duel_id}")
@@ -1269,10 +1268,196 @@ class DuelOperations:
                 """,
                 [cutoff, now],
             )
+            # Also clean expired duel invites
+            conn.execute("DELETE FROM duel_invites WHERE expires_at < ?", [now])
             conn.commit()
             return {"success": True, "count": cur.rowcount}
         except Exception as e:
             error(f"cleanup_expired_duels failed: {e}")
             return {"success": False, "count": 0}
+        finally:
+            conn.close()
+
+    # ── Open challenges ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def create_open_challenge(challenger: str, problem_slug: str, problem_title: str,
+                               problem_number: str, difficulty: str,
+                               is_wager: bool = False, wager_amount: int = None) -> Dict:
+        """Create a duel open to any group member (challengee='OPEN')."""
+        return DuelOperations.create_duel(
+            challenger, "OPEN", problem_slug, problem_title,
+            problem_number, difficulty, is_wager, wager_amount
+        )
+
+    @staticmethod
+    def get_open_challenges(username: str, group_id: str) -> Dict:
+        """Return PENDING open challenges from group members (excluding the requester)."""
+        norm_user = username.lower()
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT d.* FROM duels d
+                JOIN users u ON u.username = d.challenger
+                WHERE d.challengee = 'OPEN'
+                  AND d.status = 'PENDING'
+                  AND d.challenger != ?
+                  AND u.group_id = ?
+                  AND (d.problem_slug IS NOT NULL AND d.problem_slug != '')
+                ORDER BY d.created_at DESC
+                """,
+                [norm_user, group_id],
+            ).fetchall()
+            return {"success": True, "data": [DuelOperations._row_to_duel(r) for r in rows]}
+        except Exception as e:
+            error(f"get_open_challenges failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def accept_open_challenge(username: str, duel_id: str) -> Dict:
+        """Accept an open challenge — sets the challengee to the accepting user."""
+        norm_user = username.lower()
+        now_iso   = datetime.now(timezone.utc).isoformat()
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT * FROM duels WHERE duel_id = ? AND challengee = 'OPEN' AND status = 'PENDING'",
+                [duel_id]
+            ).fetchone()
+            if not row:
+                raise Exception("Open challenge not found or already taken")
+
+            duel = _row_to_dict(row)
+            if duel["challenger"] == norm_user:
+                raise Exception("You cannot accept your own open challenge")
+
+            is_wager         = bool(duel.get("is_wager"))
+            challenger_wager = int(duel.get("challenger_wager") or 0)
+            challengee_wager = 0
+
+            if is_wager and challenger_wager > 0:
+                challengee_wager = challenger_wager
+                opp_data = UserOperations.get_user_data(norm_user)
+                if not opp_data or _calc_total_xp(opp_data) < challengee_wager:
+                    raise Exception(f"You need at least {challengee_wager} XP to accept this wager")
+
+            conn.execute(
+                """
+                UPDATE duels
+                SET challengee = ?, status = 'ACCEPTED', accepted_at = ?, challengee_wager = ?
+                WHERE duel_id = ?
+                """,
+                [norm_user, now_iso, challengee_wager, duel_id],
+            )
+            conn.commit()
+            duel_action(f"User {username} accepted open challenge {duel_id}")
+            return {"success": True}
+        except Exception as e:
+            error(f"accept_open_challenge failed: {e}")
+            raise
+        finally:
+            conn.close()
+
+    # ── Duel invites (for non-users) ─────────────────────────────────────────
+
+    @staticmethod
+    def create_duel_invite(challenger: str, difficulty: str, email: str = None) -> Dict:
+        """Create a shareable invite link. Optionally send to an email address."""
+        import secrets
+        token      = secrets.token_urlsafe(12)
+        now_iso    = datetime.now(timezone.utc).isoformat()
+        expires_at = int(time.time()) + 86400  # 24 hours
+
+        conn = get_db()
+        try:
+            conn.execute(
+                """
+                INSERT INTO duel_invites (token, challenger, email, difficulty, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [token, challenger.lower(), email, difficulty or "EASY", now_iso, expires_at],
+            )
+            conn.commit()
+            invite_url = f"https://yeetcode.xyz/duel-invite/{token}"
+
+            if email:
+                from email_service import send_duel_invite
+                challenger_data = UserOperations.get_user_data(challenger)
+                name = (challenger_data or {}).get("display_name") or challenger
+                send_duel_invite(email, name, difficulty or "Easy", invite_url)
+
+            return {"success": True, "token": token, "invite_url": invite_url}
+        except Exception as e:
+            error(f"create_duel_invite failed: {e}")
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_duel_invite(token: str) -> Dict:
+        """Return invite details for the landing page."""
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT * FROM duel_invites WHERE token = ?", [token]
+            ).fetchone()
+            if not row:
+                return {"success": False, "error": "Invite not found or expired"}
+            inv = dict(row)
+            if int(time.time()) > inv["expires_at"]:
+                return {"success": False, "error": "Invite has expired"}
+            challenger_data = UserOperations.get_user_data(inv["challenger"])
+            name = (challenger_data or {}).get("display_name") or inv["challenger"]
+            return {
+                "success":    True,
+                "token":      token,
+                "challenger": inv["challenger"],
+                "challengerName": name,
+                "difficulty": inv["difficulty"],
+                "expiresAt":  inv["expires_at"],
+            }
+        except Exception as e:
+            error(f"get_duel_invite failed: {e}")
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def accept_duel_invite(token: str, username: str) -> Dict:
+        """Convert an invite into a real duel. User must be authenticated."""
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT * FROM duel_invites WHERE token = ?", [token]
+            ).fetchone()
+            if not row:
+                raise Exception("Invite not found or already used")
+            inv = dict(row)
+            if int(time.time()) > inv["expires_at"]:
+                raise Exception("Invite has expired")
+
+            from background_tasks import fetch_random_problem
+            difficulty = inv.get("difficulty", "EASY").upper()
+            problem = fetch_random_problem(difficulty)
+            if not problem:
+                raise Exception("Could not find a suitable problem — try again")
+
+            result = DuelOperations.create_duel(
+                inv["challenger"], username,
+                problem["titleSlug"], problem["title"],
+                problem["frontendQuestionId"], problem["difficulty"],
+            )
+
+            # Delete the invite so it can only be used once
+            conn.execute("DELETE FROM duel_invites WHERE token = ?", [token])
+            conn.commit()
+
+            return {**result, "challengerName": inv["challenger"]}
+        except Exception as e:
+            error(f"accept_duel_invite failed: {e}")
+            raise
         finally:
             conn.close()

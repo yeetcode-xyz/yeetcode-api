@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS groups (
     leader     TEXT NOT NULL,
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS duel_invites (
+    token       TEXT PRIMARY KEY,
+    challenger  TEXT NOT NULL,
+    email       TEXT,
+    difficulty  TEXT,
+    created_at  TEXT,
+    expires_at  INTEGER
+);
 """
 
 

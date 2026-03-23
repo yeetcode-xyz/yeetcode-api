@@ -232,3 +232,112 @@ async def get_duel_endpoint(
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ── Open challenges ──────────────────────────────────────────────────────────
+
+@router.post("/create-open-challenge")
+async def create_open_challenge_endpoint(
+    request: DuelRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Create an open challenge for any group member to accept."""
+    try:
+        problem_slug   = request.problem_slug
+        problem_title  = request.problem_title
+        problem_number = request.problem_number
+        difficulty     = request.difficulty
+
+        if not problem_slug:
+            from background_tasks import fetch_random_problem
+            problem = await asyncio.to_thread(fetch_random_problem)
+            if not problem:
+                return {"success": False, "error": "Could not find a suitable problem — try again"}
+            problem_slug   = problem["titleSlug"]
+            problem_title  = problem["title"]
+            problem_number = problem["frontendQuestionId"]
+            difficulty     = problem["difficulty"]
+
+        return DuelOperations.create_open_challenge(
+            request.username, problem_slug, problem_title,
+            problem_number, difficulty, request.is_wager or False, request.wager_amount
+        )
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/open-challenges/{username}")
+async def get_open_challenges_endpoint(
+    username: str,
+    group_id: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Get open challenges available to accept for a user's group."""
+    try:
+        if not group_id:
+            return {"success": True, "data": []}
+        result = DuelOperations.get_open_challenges(username, group_id)
+        if result.get('success') and result.get('data'):
+            result['data'] = [_normalize_duel(d) for d in result['data']]
+        return result
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/accept-open-challenge")
+async def accept_open_challenge_endpoint(
+    request: DuelRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Accept an open challenge."""
+    try:
+        return DuelOperations.accept_open_challenge(request.username, request.duel_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ── Duel invites ─────────────────────────────────────────────────────────────
+
+@router.post("/create-duel-invite")
+async def create_duel_invite_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key)
+):
+    """Create a shareable invite link (optionally send to an email)."""
+    try:
+        challenger = request.get("challenger") or request.get("username")
+        difficulty = request.get("difficulty", "EASY")
+        email      = request.get("email")
+        if not challenger:
+            return {"success": False, "error": "challenger is required"}
+        return DuelOperations.create_duel_invite(challenger, difficulty, email)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/duel-invite/{token}")
+async def get_duel_invite_endpoint(
+    token: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Return invite details for the public landing page."""
+    try:
+        return DuelOperations.get_duel_invite(token)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/accept-duel-invite")
+async def accept_duel_invite_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key)
+):
+    """Convert a duel invite token into a real duel (user must be authenticated)."""
+    try:
+        token    = request.get("token")
+        username = request.get("username")
+        if not token or not username:
+            return {"success": False, "error": "token and username are required"}
+        return await asyncio.to_thread(DuelOperations.accept_duel_invite, token, username)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
