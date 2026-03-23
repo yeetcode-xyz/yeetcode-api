@@ -29,10 +29,16 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 # ---------------------------------------------------------------------------
 
 def _row_to_dict(row) -> Optional[Dict]:
-    """Convert sqlite3.Row to plain dict."""
+    """Convert sqlite3.Row to plain dict, adding total_xp field."""
     if row is None:
         return None
-    return dict(row)
+    d = dict(row)
+    easy   = int(d.get("easy",   0) or 0)
+    medium = int(d.get("medium", 0) or 0)
+    hard   = int(d.get("hard",   0) or 0)
+    bonus  = int(d.get("xp",     0) or 0)
+    d["total_xp"] = easy * 100 + medium * 300 + hard * 500 + bonus
+    return d
 
 
 def _calc_total_xp(user: Dict) -> int:
