@@ -865,6 +865,24 @@ class DuelOperations:
             return None
         d = _row_to_dict(row)
         d["is_wager"] = bool(d.get("is_wager"))
+        # camelCase aliases for frontend compatibility
+        d["duelId"]               = d.get("duel_id")
+        d["problemSlug"]          = d.get("problem_slug")
+        d["problemTitle"]         = d.get("problem_title")
+        d["problemNumber"]        = d.get("problem_number")
+        d["isWager"]              = d.get("is_wager")
+        d["challengerWager"]      = d.get("challenger_wager")
+        d["challengeeWager"]      = d.get("challengee_wager")
+        d["challengerTime"]       = d.get("challenger_time")
+        d["challengeeTime"]       = d.get("challengee_time")
+        d["challengerStartTime"]  = d.get("challenger_start_time")
+        d["challengeeStartTime"]  = d.get("challengee_start_time")
+        d["startTime"]            = d.get("start_time")
+        d["xpAwarded"]            = d.get("xp_awarded")
+        d["createdAt"]            = d.get("created_at")
+        d["acceptedAt"]           = d.get("accepted_at")
+        d["completedAt"]          = d.get("completed_at")
+        d["expiresAt"]            = d.get("expires_at")
         return d
 
     @staticmethod
