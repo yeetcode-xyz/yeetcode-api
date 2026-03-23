@@ -14,6 +14,7 @@ from background_tasks import (
     update_user_stats,
     update_bounty_progress,
     generate_daily_problem,
+    poll_active_duels,
 )
 from aws import DuelOperations
 from backup import backup_to_s3
@@ -64,7 +65,18 @@ def create_scheduler() -> AsyncIOScheduler:
     )
     log.info("✅ Scheduled: Generate daily problem (00:00 UTC daily)")
 
-    # Task 4: Clean up expired/pending duels every 10 minutes
+    # Task 4: Poll active duels every 3 seconds for LeetCode submission detection
+    scheduler.add_job(
+        poll_active_duels,
+        trigger=IntervalTrigger(seconds=3),
+        id="poll_active_duels",
+        name="Poll Active Duels",
+        replace_existing=True,
+        max_instances=1,
+    )
+    log.info("✅ Scheduled: Poll active duels (every 3 seconds)")
+
+    # Task 6: Clean up expired/pending duels every 10 minutes
     scheduler.add_job(
         DuelOperations.cleanup_expired_duels,
         trigger=IntervalTrigger(minutes=10),
@@ -75,7 +87,7 @@ def create_scheduler() -> AsyncIOScheduler:
     )
     log.info("✅ Scheduled: Clean up expired duels (every 10 minutes)")
 
-    # Task 5: Daily SQLite → S3 backup at 03:00 UTC
+    # Task 7: Daily SQLite → S3 backup at 03:00 UTC
     scheduler.add_job(
         backup_to_s3,
         trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
@@ -149,6 +161,8 @@ async def trigger_job_manually(job_id: str) -> dict:
             await update_bounty_progress()
         elif job_id == "generate_daily_problem":
             await generate_daily_problem()
+        elif job_id == "poll_active_duels":
+            await poll_active_duels()
         elif job_id == "cleanup_expired_duels":
             DuelOperations.cleanup_expired_duels()
         elif job_id == "backup_to_s3":

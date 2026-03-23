@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 import os
 
 from aws import (
-    UserOperations, DailyProblemOperations, BountyOperations,
+    UserOperations, DailyProblemOperations, BountyOperations, DuelOperations,
     _calc_total_xp,
 )
 from db import get_db
@@ -408,3 +408,118 @@ async def generate_daily_problem():
     except Exception as e:
         log.error(f"❌ Error generating daily problem: {e}")
         discord_log(f"❌ Error generating daily problem: {e}")
+
+
+# ========================================
+# TASK 4: Poll Active Duels
+# ========================================
+
+def check_duel_solve(username: str, problem_slug: str, start_time_iso: str) -> Optional[int]:
+    """
+    Check LeetCode for an accepted submission of problem_slug by username
+    submitted after start_time_iso.
+
+    Returns elapsed_ms (from start_time to submission timestamp) if found,
+    or None if not found.
+    """
+    query = """
+      query recentAcSubmissions($username: String!, $limit: Int!) {
+        recentAcSubmissionList(username: $username, limit: $limit) {
+          titleSlug
+          timestamp
+        }
+      }
+    """
+    try:
+        start_dt = datetime.fromisoformat(start_time_iso.replace("Z", "+00:00"))
+    except Exception:
+        start_dt = None
+
+    try:
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": query, "variables": {"username": username, "limit": 20}},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        log.error(f"LeetCode check_duel_solve error for {username}: {e}")
+        return None
+
+    submissions = (data.get("data") or {}).get("recentAcSubmissionList") or []
+    for sub in submissions:
+        if sub.get("titleSlug") != problem_slug:
+            continue
+        ts = sub.get("timestamp")
+        if not ts:
+            continue
+        try:
+            sub_dt = datetime.fromtimestamp(int(ts), tz=__import__("datetime").timezone.utc)
+        except Exception:
+            continue
+        # Must be submitted after the duel start
+        if start_dt and sub_dt < start_dt:
+            continue
+        if start_dt:
+            elapsed_ms = int((sub_dt - start_dt).total_seconds() * 1000)
+        else:
+            elapsed_ms = 0
+        return elapsed_ms
+
+    return None
+
+
+async def poll_active_duels():
+    """
+    Background task: Check active duels every 3 seconds.
+    For each user in an active duel who hasn't submitted yet,
+    poll LeetCode's recent accepted submissions.
+    """
+    try:
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM duels WHERE status = 'ACTIVE'"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            return
+
+        for row in rows:
+            duel = dict(row)
+            duel_id      = duel.get("duel_id")
+            problem_slug = duel.get("problem_slug")
+            challenger   = duel.get("challenger")
+            challengee   = duel.get("challengee")
+            c_time       = duel.get("challenger_time", -1)
+            e_time       = duel.get("challengee_time", -1)
+            c_start      = duel.get("challenger_start_time")
+            e_start      = duel.get("challengee_start_time")
+
+            if not problem_slug:
+                continue
+
+            tasks = []
+            # Check challenger if they've started (time == 0) but not yet submitted (time > 0)
+            if c_time == 0 and c_start:
+                tasks.append(("challenger", challenger, c_start))
+            # Check challengee
+            if e_time == 0 and e_start:
+                tasks.append(("challengee", challengee, e_start))
+
+            for role, username, start_iso in tasks:
+                elapsed_ms = await asyncio.to_thread(
+                    check_duel_solve, username, problem_slug, start_iso
+                )
+                if elapsed_ms is not None:
+                    log.info(
+                        f"🎯 Duel poll: {username} solved {problem_slug} "
+                        f"in {elapsed_ms}ms (duel {duel_id})"
+                    )
+                    DuelOperations.record_duel_submission(username, duel_id, elapsed_ms)
+
+    except Exception as e:
+        log.error(f"❌ Error in poll_active_duels: {e}")

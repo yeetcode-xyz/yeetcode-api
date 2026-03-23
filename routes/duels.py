@@ -159,6 +159,68 @@ async def record_duel_submission_endpoint(
         return {"success": False, "error": str(e)}
 
 
+@router.post("/verify-duel-solve")
+async def verify_duel_solve_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Triggered when user clicks 'Verify Solve'.
+    Immediately checks LeetCode for an accepted submission,
+    then records the time if found.
+    Returns { found: bool, elapsed_ms?, completed?, winner?, xpAwarded? }
+    """
+    try:
+        username = request.get('username')
+        duel_id  = request.get('duel_id')
+
+        if not duel_id or not username:
+            return {"success": False, "error": "Duel ID and username required"}
+
+        from db import get_db
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT * FROM duels WHERE duel_id = ?", [duel_id]
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return {"success": False, "error": "Duel not found"}
+
+        duel = dict(row)
+        problem_slug = duel.get("problem_slug")
+        if not problem_slug:
+            return {"success": False, "error": "Duel has no problem assigned"}
+
+        norm_user = username.lower()
+        is_challenger = norm_user == duel.get("challenger")
+        if not is_challenger and norm_user != duel.get("challengee"):
+            return {"success": False, "error": "User not part of this duel"}
+
+        start_field = "challenger_start_time" if is_challenger else "challengee_start_time"
+        start_iso   = duel.get(start_field)
+        if not start_iso:
+            return {"success": False, "found": False, "error": "Duel not started yet"}
+
+        from background_tasks import check_duel_solve
+        elapsed_ms = await asyncio.to_thread(check_duel_solve, username, problem_slug, start_iso)
+
+        if elapsed_ms is None:
+            return {"success": True, "found": False}
+
+        result = DuelOperations.record_duel_submission(username, duel_id, elapsed_ms)
+        return {
+            "success":    True,
+            "found":      True,
+            "elapsed_ms": elapsed_ms,
+            **result,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.get("/duel/{duel_id}")
 async def get_duel_endpoint(
     duel_id: str,
