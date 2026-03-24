@@ -1324,7 +1324,7 @@ class DuelOperations:
                 """
                 SELECT d.* FROM duels d
                 JOIN users u ON u.username = d.challenger
-                WHERE d.challengee = 'OPEN'
+                WHERE d.challengee = 'open'
                   AND d.status = 'PENDING'
                   AND d.challenger != ?
                   AND u.group_id = ?
@@ -1348,7 +1348,7 @@ class DuelOperations:
         conn = get_db()
         try:
             row = conn.execute(
-                "SELECT * FROM duels WHERE duel_id = ? AND challengee = 'OPEN' AND status = 'PENDING'",
+                "SELECT * FROM duels WHERE duel_id = ? AND challengee = 'open' AND status = 'PENDING'",
                 [duel_id]
             ).fetchone()
             if not row:
