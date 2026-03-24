@@ -28,25 +28,38 @@ DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _safe_int(val, default: int = 0) -> int:
+    """Coerce a SQLite value to int. Handles bytes (BLOB-stored ints from migration)."""
+    if val is None:
+        return default
+    if isinstance(val, (bytes, bytearray)):
+        # SQLite migration stored integers as little-endian BLOB
+        return int.from_bytes(val, "little")
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def _row_to_dict(row) -> Optional[Dict]:
     """Convert sqlite3.Row to plain dict, adding total_xp field."""
     if row is None:
         return None
     d = dict(row)
-    easy   = int(d.get("easy",   0) or 0)
-    medium = int(d.get("medium", 0) or 0)
-    hard   = int(d.get("hard",   0) or 0)
-    bonus  = int(d.get("xp",     0) or 0)
+    easy   = _safe_int(d.get("easy"))
+    medium = _safe_int(d.get("medium"))
+    hard   = _safe_int(d.get("hard"))
+    bonus  = _safe_int(d.get("xp"))
     d["total_xp"] = easy * 100 + medium * 300 + hard * 500 + bonus
     return d
 
 
 def _calc_total_xp(user: Dict) -> int:
     """Compute total XP = difficulty XP + bonus XP."""
-    easy   = int(user.get("easy",   0) or 0)
-    medium = int(user.get("medium", 0) or 0)
-    hard   = int(user.get("hard",   0) or 0)
-    bonus  = int(user.get("xp",     0) or 0)
+    easy   = _safe_int(user.get("easy"))
+    medium = _safe_int(user.get("medium"))
+    hard   = _safe_int(user.get("hard"))
+    bonus  = _safe_int(user.get("xp"))
     return easy * 100 + medium * 300 + hard * 500 + bonus
 
 
@@ -58,10 +71,10 @@ def _user_row_to_leaderboard(user: Dict) -> Dict:
     return {
         "username": user.get("username", ""),
         "name":     display_name,
-        "easy":     int(user.get("easy",   0) or 0),
-        "medium":   int(user.get("medium", 0) or 0),
-        "hard":     int(user.get("hard",   0) or 0),
-        "today":    int(user.get("today",  0) or 0),
+        "easy":     _safe_int(user.get("easy")),
+        "medium":   _safe_int(user.get("medium")),
+        "hard":     _safe_int(user.get("hard")),
+        "today":    _safe_int(user.get("today")),
         "xp":       _calc_total_xp(user),
         "group_id": user.get("group_id"),
     }
@@ -408,10 +421,10 @@ class GroupOperations:
                 leaderboard.append({
                     "username": u.get("username", ""),
                     "name":     display_name,
-                    "easy":     int(u.get("easy",   0) or 0),
-                    "medium":   int(u.get("medium", 0) or 0),
-                    "hard":     int(u.get("hard",   0) or 0),
-                    "today":    int(u.get("today",  0) or 0),
+                    "easy":     _safe_int(u.get("easy")),
+                    "medium":   _safe_int(u.get("medium")),
+                    "hard":     _safe_int(u.get("hard")),
+                    "today":    _safe_int(u.get("today")),
                     "xp":       _calc_total_xp(u),
                 })
             return {"success": True, "data": leaderboard}
@@ -695,9 +708,9 @@ class BountyOperations:
             current_time = int(time.time())
 
         b           = dict(row)
-        count       = int(b.get("count") or 0)
-        expiry_date = int(b.get("expiry_date") or 0)
-        start_date  = int(b.get("start_date")  or 0)
+        count       = _safe_int(b.get("count"))
+        expiry_date = _safe_int(b.get("expiry_date"))
+        start_date  = _safe_int(b.get("start_date"))
 
         b["bountyId"] = b.get("bounty_id")
         b["id"]       = b.get("bounty_id")
@@ -999,7 +1012,7 @@ class DuelOperations:
 
             duel = _row_to_dict(row)
             is_wager         = bool(duel.get("is_wager"))
-            challenger_wager = int(duel.get("challenger_wager") or 0)
+            challenger_wager = _safe_int(duel.get("challenger_wager"))
 
             # Symmetric wager model: challengee always stakes the same amount as challenger
             challengee_wager = 0
@@ -1153,7 +1166,7 @@ class DuelOperations:
                 difficulty   = duel.get("difficulty", "Medium")
                 is_wager     = bool(duel.get("is_wager"))
                 chall_wager  = int(duel.get("challenger_wager")  or 0)
-                chalee_wager = int(duel.get("challengee_wager") or 0)
+                chalee_wager = _safe_int(duel.get("challengee_wager"))
 
                 if new_challenger_time < new_challengee_time:
                     winner = challenger
@@ -1335,7 +1348,7 @@ class DuelOperations:
                 raise Exception("You cannot accept your own open challenge")
 
             is_wager         = bool(duel.get("is_wager"))
-            challenger_wager = int(duel.get("challenger_wager") or 0)
+            challenger_wager = _safe_int(duel.get("challenger_wager"))
             challengee_wager = 0
 
             if is_wager and challenger_wager > 0:
