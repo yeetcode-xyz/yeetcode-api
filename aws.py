@@ -41,11 +41,22 @@ def _safe_int(val, default: int = 0) -> int:
         return default
 
 
+_INT_FIELDS = {
+    "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid",
+    "wager_amount", "challenger_wager", "challengee_wager",
+    "challenger_time", "challengee_time", "expires_at",
+    "count", "expiry_date", "start_date", "xp_reward",
+}
+
 def _row_to_dict(row) -> Optional[Dict]:
-    """Convert sqlite3.Row to plain dict, adding total_xp field."""
+    """Convert sqlite3.Row to plain dict, coercing BLOB ints, adding total_xp."""
     if row is None:
         return None
     d = dict(row)
+    # Coerce any integer fields stored as BLOB bytes from the DynamoDB migration
+    for field in _INT_FIELDS:
+        if field in d and isinstance(d[field], (bytes, bytearray)):
+            d[field] = _safe_int(d[field])
     easy   = _safe_int(d.get("easy"))
     medium = _safe_int(d.get("medium"))
     hard   = _safe_int(d.get("hard"))
