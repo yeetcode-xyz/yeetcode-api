@@ -128,8 +128,48 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_blob_integers(conn):
+    """
+    One-time migration: rewrite BLOB-stored integers as proper SQLite integers.
+
+    The DynamoDB → SQLite migration inserted Python Decimal values which
+    sqlite3 serialized as BLOB bytes. Any arithmetic or comparison against
+    those columns in SQL silently treats them as 0, breaking XP awards,
+    bounty date filtering, etc.
+    """
+    # Table → integer columns that may contain BLOB-stored integers
+    targets = {
+        "users":           ["easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid"],
+        "bounties":        ["count", "start_date", "expiry_date", "xp"],
+        "bounty_progress": ["progress"],
+        "duels":           ["is_wager", "challenger_wager", "challengee_wager",
+                            "challenger_time", "challengee_time", "xp_awarded", "expires_at"],
+    }
+
+    for table, columns in targets.items():
+        try:
+            rows = conn.execute(f"SELECT rowid, * FROM {table}").fetchall()
+        except Exception:
+            continue  # table doesn't exist yet
+
+        for row in rows:
+            updates = {}
+            for col in columns:
+                val = row[col] if col in row.keys() else None
+                if isinstance(val, (bytes, bytearray)):
+                    updates[col] = int.from_bytes(val, "little")
+            if updates:
+                set_clause = ", ".join(f"{c} = ?" for c in updates)
+                conn.execute(
+                    f"UPDATE {table} SET {set_clause} WHERE rowid = ?",
+                    list(updates.values()) + [row["rowid"]],
+                )
+
+    conn.commit()
+
+
 def init_db():
-    """Initialize database schema (idempotent — safe to call on every startup)."""
+    """Initialize database schema and run one-time data migrations on startup."""
     # Ensure parent directory exists
     db_dir = os.path.dirname(DB_PATH)
     if db_dir and not os.path.exists(db_dir):
@@ -138,4 +178,5 @@ def init_db():
     conn = get_db()
     conn.executescript(SCHEMA_SQL)
     conn.commit()
+    _migrate_blob_integers(conn)
     conn.close()
