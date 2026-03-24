@@ -43,7 +43,7 @@ def _safe_int(val, default: int = 0) -> int:
 
 _INT_FIELDS = {
     "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid",
-    "wager_amount", "challenger_wager", "challengee_wager",
+    "is_wager", "wager_amount", "challenger_wager", "challengee_wager",
     "challenger_time", "challengee_time", "expires_at",
     "count", "expiry_date", "start_date", "xp_reward",
 }
@@ -1190,8 +1190,8 @@ class DuelOperations:
 
             if should_complete:
                 difficulty   = duel.get("difficulty", "Medium")
-                is_wager     = bool(duel.get("is_wager"))
-                chall_wager  = int(duel.get("challenger_wager")  or 0)
+                is_wager     = bool(_safe_int(duel.get("is_wager")))
+                chall_wager  = _safe_int(duel.get("challenger_wager"))
                 chalee_wager = _safe_int(duel.get("challengee_wager"))
 
                 if new_challenger_time < new_challengee_time:
