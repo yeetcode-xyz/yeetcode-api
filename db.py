@@ -115,6 +115,15 @@ CREATE TABLE IF NOT EXISTS duel_invites (
     created_at  TEXT,
     expires_at  INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    username    TEXT NOT NULL,
+    endpoint    TEXT PRIMARY KEY,
+    p256dh      TEXT NOT NULL,
+    auth        TEXT NOT NULL,
+    created_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_push_username ON push_subscriptions(username);
 """
 
 

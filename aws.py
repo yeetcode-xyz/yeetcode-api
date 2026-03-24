@@ -1001,6 +1001,13 @@ class DuelOperations:
                 f"Created duel {duel_id}",
                 challenger=norm_user, challengee=norm_opponent, problem=problem_slug
             )
+            try:
+                from push_service import send_push
+                challenger_data = UserOperations.get_user_data(norm_user)
+                display = (challenger_data or {}).get("display_name") or norm_user
+                send_push(norm_opponent, "⚔️ Duel Challenge!", f"{display} challenged you to a duel!")
+            except Exception:
+                pass
             return {"success": True, "data": {"duel_id": duel_id}}
         except Exception as e:
             error(f"create_duel failed: {e}")
@@ -1043,6 +1050,14 @@ class DuelOperations:
             )
             conn.commit()
             duel_action(f"User {username} accepted duel {duel_id}")
+            try:
+                from push_service import send_push
+                acceptee_data = UserOperations.get_user_data(norm_user)
+                display = (acceptee_data or {}).get("display_name") or norm_user
+                challenger = duel.get("challenger", "")
+                send_push(challenger, "✅ Duel Accepted!", f"{display} accepted your duel challenge!")
+            except Exception:
+                pass
             return {"success": True}
         except Exception as e:
             error(f"accept_duel failed for {duel_id}: {e}")
@@ -1216,6 +1231,23 @@ class DuelOperations:
                     [winner, total_xp, now_iso, duel_id],
                 )
                 conn.commit()
+
+                # Push result notifications
+                try:
+                    from push_service import send_push
+                    loser = challengee if winner == challenger else challenger
+                    if winner:
+                        w_data = UserOperations.get_user_data(winner)
+                        l_data = UserOperations.get_user_data(loser)
+                        w_display = (w_data or {}).get("display_name") or winner
+                        l_display = (l_data or {}).get("display_name") or loser
+                        send_push(winner, "🏆 Duel Won!", f"You beat {l_display}! +{total_xp} XP")
+                        send_push(loser,  "😤 Duel Lost", f"{w_display} beat you. Rematch?")
+                    else:
+                        send_push(challenger, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
+                        send_push(challengee, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
+                except Exception:
+                    pass
 
             duel_action(f"User {norm_user} recorded time", duel_id=duel_id, time_ms=actual_ms)
             return {

@@ -36,6 +36,7 @@ from routes.daily import router as daily_router
 from routes.bounties import router as bounties_router
 from routes.duels import router as duels_router
 from routes.admin import router as admin_router
+from routes.push import router as push_router
 
 from aws import DuelOperations, VerificationOperations
 from logger import debug, info, warning, error
@@ -107,6 +108,7 @@ app.include_router(daily_router)
 app.include_router(bounties_router)
 app.include_router(duels_router)
 app.include_router(admin_router)
+app.include_router(push_router)
 
 if DEBUG_MODE:
     print("[DEBUG] Registered routes:")

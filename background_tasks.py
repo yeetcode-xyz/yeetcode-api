@@ -159,6 +159,38 @@ async def process_single_user(username: str) -> bool:
             else:
                 log.error(f"❌ Failed to update stats for {username}")
 
+            # Rank overtake notifications
+            try:
+                bonus_xp  = int(user_data.get("xp") or 0)
+                old_total = current_easy * 100 + current_medium * 300 + current_hard * 500 + bonus_xp
+                new_total = stats["easy"] * 100 + stats["medium"] * 300 + stats["hard"] * 500 + bonus_xp
+                group_id  = user_data.get("group_id")
+                if new_total > old_total and group_id:
+                    conn = get_db()
+                    try:
+                        overtaken = conn.execute(
+                            """
+                            SELECT username FROM users
+                            WHERE group_id = ? AND username != ?
+                              AND (easy * 100 + medium * 300 + hard * 500 + xp) > ?
+                              AND (easy * 100 + medium * 300 + hard * 500 + xp) <= ?
+                            """,
+                            [group_id, username.lower(), old_total, new_total],
+                        ).fetchall()
+                    finally:
+                        conn.close()
+                    if overtaken:
+                        from push_service import send_push
+                        display = user_data.get("display_name") or username
+                        for row in overtaken:
+                            send_push(
+                                row["username"],
+                                "📉 You've been overtaken!",
+                                f"{display} just passed you on the leaderboard!",
+                            )
+            except Exception as e:
+                log.warning(f"Rank overtake push failed for {username}: {e}")
+
         # Check daily completion
         today      = datetime.utcnow().strftime("%Y-%m-%d")
         last_date  = user_data.get("last_completed_date")
@@ -296,6 +328,16 @@ async def update_bounty_progress():
                             f"✅ {username} completed bounty {bounty_id} "
                             f"({metric}: {user_value}/{required_count})"
                         )
+                        try:
+                            from push_service import send_push
+                            bounty_title = bounty.get("title") or "a bounty"
+                            send_push(
+                                username,
+                                "🎯 Bounty Complete!",
+                                f"You earned {xp_reward} XP for completing '{bounty_title}'",
+                            )
+                        except Exception:
+                            pass
 
         log.info(f"🏁 Bounty update complete: {completion_count} completions detected")
 
