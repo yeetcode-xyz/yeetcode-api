@@ -349,8 +349,9 @@ async def update_bounty_progress():
 # TASK 3: Generate Daily Problem
 # ========================================
 
-def fetch_random_problem() -> Optional[Dict]:
-    """Fetch a random Easy problem from LeetCode."""
+def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
+    """Fetch a random problem from LeetCode for the given difficulty."""
+    difficulty = (difficulty or "EASY").upper()
     query = """
     query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
       problemsetQuestionList: questionList(
@@ -382,7 +383,7 @@ def fetch_random_problem() -> Optional[Dict]:
             "categorySlug": "",
             "limit": 1,
             "skip": skip,
-            "filters": {"difficulty": "EASY"},
+            "filters": {"difficulty": difficulty},
         }
 
         try:
