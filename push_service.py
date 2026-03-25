@@ -20,9 +20,12 @@ import logging
 
 log = logging.getLogger(__name__)
 
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY", "")
 VAPID_EMAIL       = os.getenv("VAPID_CLAIMS_EMAIL", "admin@yeetcode.xyz")
+
+# Expand literal \n sequences that Docker/Coolify env vars may introduce
+_raw_key = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_PRIVATE_KEY = _raw_key.replace("\\n", "\n") if _raw_key else ""
 
 
 def send_push(username: str, title: str, body: str, url: str = "/") -> int:
