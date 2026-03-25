@@ -181,6 +181,25 @@ async def get_db_status(
         return {"success": False, "error": str(e)}
 
 
+@router.post("/user/clear-invalid/{username}")
+async def clear_leetcode_invalid(
+    username: str,
+    api_key: str = Depends(verify_api_key)
+):
+    """Clear the leetcode_invalid flag for a user so they appear in leaderboards"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE users SET leetcode_invalid = 0 WHERE username = ?", [username.lower()])
+        conn.commit()
+        affected = conn.total_changes
+        conn.close()
+        if affected == 0:
+            return {"success": False, "error": f"User '{username}' not found"}
+        return {"success": True, "message": f"Cleared leetcode_invalid for {username}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.post("/trigger/backup")
 async def trigger_backup(
     api_key: str = Depends(verify_api_key)
