@@ -131,6 +131,17 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     created_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_push_username ON push_subscriptions(username);
+
+CREATE TABLE IF NOT EXISTS friendships (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    requester   TEXT NOT NULL,
+    addressee   TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending',
+    created_at  TEXT,
+    UNIQUE(requester, addressee)
+);
+CREATE INDEX IF NOT EXISTS idx_friendships_requester ON friendships(requester);
+CREATE INDEX IF NOT EXISTS idx_friendships_addressee ON friendships(addressee);
 """
 
 
