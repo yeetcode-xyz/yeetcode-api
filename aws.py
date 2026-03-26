@@ -1311,7 +1311,7 @@ class DuelOperations:
             expired = conn.execute(
                 """
                 SELECT * FROM duels
-                WHERE status IN ('PENDING', 'ACTIVE')
+                WHERE status IN ('PENDING', 'ACCEPTED', 'ACTIVE')
                   AND expires_at < ?
                 """,
                 [now],
@@ -1320,7 +1320,8 @@ class DuelOperations:
             completed = 0
             for row in expired:
                 duel = _row_to_dict(row)
-                if duel["status"] == "PENDING":
+                if duel["status"] in ("PENDING", "ACCEPTED"):
+                    # Never started — delete silently, no XP change
                     conn.execute("DELETE FROM duels WHERE duel_id = ?", [duel["duel_id"]])
                 else:
                     c_time = duel["challenger_time"]
@@ -1330,6 +1331,7 @@ class DuelOperations:
                         winner = duel["challenger"]
                     elif e_time > 0 and c_time <= 0:
                         winner = duel["challengee"]
+                    # Neither solved (both <= 0) → draw, winner stays None, no XP change
                     conn.execute(
                         """
                         UPDATE duels
