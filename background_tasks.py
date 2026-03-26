@@ -432,24 +432,29 @@ async def update_bounty_progress():
 
                     # Fetch previous progress + completion state
                     prev_row = conn.execute(
-                        "SELECT progress, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
+                        "SELECT progress, baseline, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
                         [bounty_id, username.lower()],
                     ).fetchone()
-                    prev_progress = prev_row["progress"]   if prev_row else 0
-                    xp_already    = prev_row["xp_awarded"] if prev_row else 0
+                    prev_abs   = prev_row["progress"]   if prev_row else None
+                    baseline   = prev_row["baseline"]   if prev_row else new_progress
+                    xp_already = prev_row["xp_awarded"] if prev_row else 0
+
+                    # Effective = absolute minus baseline
+                    prev_effective = max(0, (prev_abs or 0) - baseline)
+                    new_effective  = max(0, new_progress - baseline)
 
                     # Never decrease progress (guards against transient API gaps)
-                    if new_progress < prev_progress:
+                    if prev_abs is not None and new_progress < prev_abs:
                         continue
 
                     # No change — skip
-                    if new_progress == prev_progress:
+                    if prev_abs is not None and new_progress == prev_abs:
                         continue
 
                     # 80% milestone notification (fire only when crossing the threshold)
                     if required_count > 0:
-                        old_pct = (prev_progress / required_count) * 100
-                        new_pct = (new_progress  / required_count) * 100
+                        old_pct = (prev_effective / required_count) * 100
+                        new_pct = (new_effective  / required_count) * 100
                         if old_pct < 80 <= new_pct and new_pct < 100:
                             remaining = required_count - new_progress
                             try:

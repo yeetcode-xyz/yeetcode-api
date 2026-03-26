@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS bounty_progress (
     bounty_id    TEXT NOT NULL,
     username     TEXT NOT NULL,
     progress     INTEGER DEFAULT 0,
+    baseline     INTEGER DEFAULT 0,
     xp_awarded   INTEGER DEFAULT 0,
     completed_at TEXT DEFAULT NULL,
     PRIMARY KEY (bounty_id, username)
@@ -193,6 +194,7 @@ def _migrate_add_columns(conn):
         ("users",           "weekly_solved",       "INTEGER DEFAULT 0"),
         ("bounties",        "tags",                "TEXT"),
         ("bounties",        "difficulty_filter",   "TEXT"),
+        ("bounty_progress", "baseline",            "INTEGER DEFAULT 0"),
         ("bounty_progress", "xp_awarded",          "INTEGER DEFAULT 0"),
         ("bounty_progress", "completed_at",        "TEXT DEFAULT NULL"),
     ]

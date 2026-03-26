@@ -714,8 +714,9 @@ class DailyProblemOperations:
 class BountyOperations:
 
     @staticmethod
-    def _enrich_bounty(row: Dict, user_progress: int = 0, completed_at: str = None,
-                       completed_by_count: int = 0, current_time: int = None) -> Dict:
+    def _enrich_bounty(row: Dict, abs_progress: int = 0, baseline: int = 0,
+                       completed_at: str = None, completed_by_count: int = 0,
+                       current_time: int = None) -> Dict:
         if current_time is None:
             current_time = int(time.time())
 
@@ -734,10 +735,11 @@ class BountyOperations:
         b["timeRemaining"]   = time_remaining
         b["daysRemaining"]   = time_remaining // (24 * 3600)
         b["hoursRemaining"]  = (time_remaining % (24 * 3600)) // 3600
-        b["userProgress"]    = user_progress
-        b["progressPercent"] = min(
-            (user_progress / count) * 100 if count > 0 else 0, 100
-        )
+
+        # Progress relative to baseline — never show negative or over cap
+        effective = max(0, abs_progress - baseline)
+        b["userProgress"]    = min(effective, count)
+        b["progressPercent"] = min((effective / count) * 100 if count > 0 else 0, 100)
         b["completedAt"]      = completed_at
         b["completedByCount"] = completed_by_count
         return b
@@ -752,7 +754,8 @@ class BountyOperations:
             rows = conn.execute(
                 """
                 SELECT b.*,
-                       COALESCE(bp.progress, 0) AS user_progress,
+                       COALESCE(bp.progress, 0)  AS abs_progress,
+                       COALESCE(bp.baseline, 0)  AS user_baseline,
                        bp.completed_at,
                        (SELECT COUNT(*) FROM bounty_progress bp2
                         WHERE bp2.bounty_id = b.bounty_id AND bp2.xp_awarded = 1
@@ -768,7 +771,8 @@ class BountyOperations:
             bounties = [
                 BountyOperations._enrich_bounty(
                     _row_to_dict(r),
-                    user_progress=r["user_progress"],
+                    abs_progress=r["abs_progress"],
+                    baseline=r["user_baseline"],
                     completed_at=r["completed_at"],
                     completed_by_count=r["completed_by_count"] or 0,
                     current_time=current_time,
@@ -841,17 +845,20 @@ class BountyOperations:
     @staticmethod
     def update_bounty_progress(username: str, bounty_id: str, new_progress: int,
                                xp_reward: int = 0, already_awarded: bool = False) -> Dict:
-        """Upsert bounty progress. Awards XP exactly once on first completion (idempotent)."""
+        """Upsert bounty progress using baseline math. Awards XP exactly once on first completion."""
         norm_user = username.lower()
         conn = get_db()
         try:
             # Check previous state
             prev = conn.execute(
-                "SELECT progress, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
+                "SELECT progress, baseline, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
                 [bounty_id, norm_user],
             ).fetchone()
-            prev_progress = prev["progress"]   if prev else 0
-            xp_already    = prev["xp_awarded"] if prev else 0
+
+            is_new      = prev is None
+            prev_abs    = prev["progress"]   if prev else 0
+            baseline    = prev["baseline"]   if prev else new_progress  # first time: baseline = current value
+            xp_already  = prev["xp_awarded"] if prev else 0
 
             # Get bounty count requirement
             bounty_row = conn.execute(
@@ -861,29 +868,33 @@ class BountyOperations:
                 return {"success": False, "error": "Bounty not found"}
             required_count = bounty_row["count"]
 
-            just_completed = (prev_progress < required_count and new_progress >= required_count)
+            # Effective progress = absolute value minus baseline
+            prev_effective = max(0, prev_abs  - baseline)
+            new_effective  = max(0, new_progress - baseline)
+
+            just_completed = prev_effective < required_count and new_effective >= required_count
             award_xp_now   = just_completed and xp_reward > 0 and not xp_already and not already_awarded
 
             if just_completed:
                 conn.execute(
                     """
-                    INSERT INTO bounty_progress (bounty_id, username, progress, xp_awarded, completed_at)
-                    VALUES (?,?,?,1,datetime('now'))
+                    INSERT INTO bounty_progress (bounty_id, username, progress, baseline, xp_awarded, completed_at)
+                    VALUES (?,?,?,?,1,datetime('now'))
                     ON CONFLICT(bounty_id, username) DO UPDATE SET
                         progress     = excluded.progress,
                         xp_awarded   = 1,
                         completed_at = COALESCE(bounty_progress.completed_at, datetime('now'))
                     """,
-                    [bounty_id, norm_user, new_progress],
+                    [bounty_id, norm_user, new_progress, baseline],
                 )
             else:
                 conn.execute(
                     """
-                    INSERT INTO bounty_progress (bounty_id, username, progress, xp_awarded, completed_at)
-                    VALUES (?,?,?,0,NULL)
+                    INSERT INTO bounty_progress (bounty_id, username, progress, baseline, xp_awarded, completed_at)
+                    VALUES (?,?,?,?,0,NULL)
                     ON CONFLICT(bounty_id, username) DO UPDATE SET progress = excluded.progress
                     """,
-                    [bounty_id, norm_user, new_progress],
+                    [bounty_id, norm_user, new_progress, baseline],
                 )
             conn.commit()
 
@@ -893,10 +904,10 @@ class BountyOperations:
 
             return {
                 "success":          True,
-                "progress":         new_progress,
+                "progress":         new_effective,
                 "completed":        just_completed,
                 "xp_awarded":       xp_reward if award_xp_now else 0,
-                "progress_percent": (new_progress / required_count * 100) if required_count > 0 else 0,
+                "progress_percent": (new_effective / required_count * 100) if required_count > 0 else 0,
             }
         except Exception as e:
             error(f"update_bounty_progress failed for {username}/{bounty_id}: {e}")
