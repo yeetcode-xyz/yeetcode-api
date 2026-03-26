@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS users (
     today               INTEGER DEFAULT 0,
     created_at          TEXT,
     updated_at          TEXT,
-    leetcode_invalid    INTEGER DEFAULT 0
+    leetcode_invalid    INTEGER DEFAULT 0,
+    tag_stats           TEXT DEFAULT NULL,
+    weekly_solved       INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);
 CREATE INDEX IF NOT EXISTS idx_users_university ON users(university);
@@ -48,21 +50,25 @@ CREATE INDEX IF NOT EXISTS idx_completions_date ON daily_completions(date);
 CREATE INDEX IF NOT EXISTS idx_completions_user ON daily_completions(username);
 
 CREATE TABLE IF NOT EXISTS bounties (
-    bounty_id   TEXT PRIMARY KEY,
-    title       TEXT,
-    description TEXT,
-    slug        TEXT,
-    metric      TEXT,
-    count       INTEGER,
-    start_date  INTEGER,
-    expiry_date INTEGER,
-    xp          INTEGER
+    bounty_id        TEXT PRIMARY KEY,
+    title            TEXT,
+    description      TEXT,
+    slug             TEXT,
+    metric           TEXT,
+    count            INTEGER,
+    start_date       INTEGER,
+    expiry_date      INTEGER,
+    xp               INTEGER,
+    tags             TEXT,
+    difficulty_filter TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bounty_progress (
-    bounty_id   TEXT NOT NULL,
-    username    TEXT NOT NULL,
-    progress    INTEGER DEFAULT 0,
+    bounty_id    TEXT NOT NULL,
+    username     TEXT NOT NULL,
+    progress     INTEGER DEFAULT 0,
+    xp_awarded   INTEGER DEFAULT 0,
+    completed_at TEXT DEFAULT NULL,
     PRIMARY KEY (bounty_id, username)
 );
 
@@ -177,6 +183,27 @@ def _migrate_blob_integers(conn):
     conn.commit()
 
 
+def _migrate_add_columns(conn):
+    """
+    Safe ALTER TABLE migrations for new columns added after initial deployment.
+    Each ALTER TABLE is wrapped in try/except — if the column already exists, it's a no-op.
+    """
+    additions = [
+        ("users",           "tag_stats",          "TEXT DEFAULT NULL"),
+        ("users",           "weekly_solved",       "INTEGER DEFAULT 0"),
+        ("bounties",        "tags",                "TEXT"),
+        ("bounties",        "difficulty_filter",   "TEXT"),
+        ("bounty_progress", "xp_awarded",          "INTEGER DEFAULT 0"),
+        ("bounty_progress", "completed_at",        "TEXT DEFAULT NULL"),
+    ]
+    for table, col, typedef in additions:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass  # column already exists
+    conn.commit()
+
+
 def init_db():
     """Initialize database schema and run one-time data migrations on startup."""
     # Ensure parent directory exists
@@ -188,4 +215,5 @@ def init_db():
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     _migrate_blob_integers(conn)
+    _migrate_add_columns(conn)
     conn.close()

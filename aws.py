@@ -714,7 +714,8 @@ class DailyProblemOperations:
 class BountyOperations:
 
     @staticmethod
-    def _enrich_bounty(row: Dict, user_progress: int = 0, current_time: int = None) -> Dict:
+    def _enrich_bounty(row: Dict, user_progress: int = 0, completed_at: str = None,
+                       completed_by_count: int = 0, current_time: int = None) -> Dict:
         if current_time is None:
             current_time = int(time.time())
 
@@ -723,19 +724,22 @@ class BountyOperations:
         expiry_date = _safe_int(b.get("expiry_date"))
         start_date  = _safe_int(b.get("start_date"))
 
-        b["bountyId"] = b.get("bounty_id")
-        b["id"]       = b.get("bounty_id")
-        b["isActive"]  = start_date <= current_time <= expiry_date
-        b["isExpired"] = current_time > expiry_date
+        b["bountyId"]         = b.get("bounty_id")
+        b["id"]               = b.get("bounty_id")
+        b["isActive"]         = start_date <= current_time <= expiry_date
+        b["isExpired"]        = current_time > expiry_date
+        b["difficultyFilter"] = b.get("difficulty_filter")
 
-        time_remaining      = max(0, expiry_date - current_time)
-        b["timeRemaining"]  = time_remaining
-        b["daysRemaining"]  = time_remaining // (24 * 3600)
-        b["hoursRemaining"] = (time_remaining % (24 * 3600)) // 3600
-        b["userProgress"]   = user_progress
+        time_remaining       = max(0, expiry_date - current_time)
+        b["timeRemaining"]   = time_remaining
+        b["daysRemaining"]   = time_remaining // (24 * 3600)
+        b["hoursRemaining"]  = (time_remaining % (24 * 3600)) // 3600
+        b["userProgress"]    = user_progress
         b["progressPercent"] = min(
             (user_progress / count) * 100 if count > 0 else 0, 100
         )
+        b["completedAt"]      = completed_at
+        b["completedByCount"] = completed_by_count
         return b
 
     @staticmethod
@@ -747,7 +751,12 @@ class BountyOperations:
         try:
             rows = conn.execute(
                 """
-                SELECT b.*, COALESCE(bp.progress, 0) AS user_progress
+                SELECT b.*,
+                       COALESCE(bp.progress, 0) AS user_progress,
+                       bp.completed_at,
+                       (SELECT COUNT(*) FROM bounty_progress bp2
+                        WHERE bp2.bounty_id = b.bounty_id AND bp2.xp_awarded = 1
+                       ) AS completed_by_count
                 FROM bounties b
                 LEFT JOIN bounty_progress bp
                     ON bp.bounty_id = b.bounty_id AND bp.username = ?
@@ -760,6 +769,8 @@ class BountyOperations:
                 BountyOperations._enrich_bounty(
                     _row_to_dict(r),
                     user_progress=r["user_progress"],
+                    completed_at=r["completed_at"],
+                    completed_by_count=r["completed_by_count"] or 0,
                     current_time=current_time,
                 )
                 for r in rows
@@ -772,71 +783,75 @@ class BountyOperations:
             conn.close()
 
     @staticmethod
-    def get_all_bounties() -> Dict:
-        conn = get_db()
-        try:
-            rows = conn.execute("SELECT * FROM bounties").fetchall()
-            bounties = []
-            for r in rows:
-                d = _row_to_dict(r)
-                d["bountyId"] = d.get("bounty_id")
-                d["id"]       = d.get("bounty_id")
-                bounties.append(d)
-            return {"success": True, "data": bounties}
-        except Exception as e:
-            error(f"get_all_bounties failed: {e}")
-            return {"success": False, "error": str(e)}
-        finally:
-            conn.close()
-
-    @staticmethod
-    def get_bounty_by_id(bounty_id: str) -> Dict:
-        conn = get_db()
-        try:
-            row = conn.execute(
-                "SELECT * FROM bounties WHERE bounty_id = ?", [bounty_id]
-            ).fetchone()
-            if row:
-                d = _row_to_dict(row)
-                d["bountyId"] = d["bounty_id"]
-                d["id"]       = d["bounty_id"]
-                return {"success": True, "data": d}
-            return {"success": False, "error": "Bounty not found"}
-        except Exception as e:
-            error(f"get_bounty_by_id failed for {bounty_id}: {e}")
-            return {"success": False, "error": str(e)}
-        finally:
-            conn.close()
-
-    @staticmethod
-    def get_bounty_progress(bounty_id: str) -> Dict:
+    def get_bounty_leaderboard(bounty_id: str, limit: int = 20) -> Dict:
+        """Top users by progress for a specific bounty."""
         conn = get_db()
         try:
             rows = conn.execute(
-                "SELECT username, progress FROM bounty_progress WHERE bounty_id = ?",
-                [bounty_id],
+                """
+                SELECT bp.username, bp.progress, bp.completed_at, bp.xp_awarded,
+                       u.display_name
+                FROM bounty_progress bp
+                JOIN users u ON u.username = bp.username
+                WHERE bp.bounty_id = ?
+                ORDER BY bp.progress DESC, bp.completed_at ASC
+                LIMIT ?
+                """,
+                [bounty_id, limit],
             ).fetchall()
-            progress = {row["username"]: row["progress"] for row in rows}
-            return {"success": True, "data": progress}
+            leaderboard = []
+            for rank, row in enumerate(rows, start=1):
+                entry = _row_to_dict(row)
+                entry["rank"] = rank
+                leaderboard.append(entry)
+            return {"success": True, "data": leaderboard}
         except Exception as e:
-            error(f"get_bounty_progress failed for {bounty_id}: {e}")
+            error(f"get_bounty_leaderboard failed for {bounty_id}: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_bounty_feed(limit: int = 20) -> Dict:
+        """Most recent bounty completions across all users."""
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                """
+                SELECT bp.username, bp.bounty_id, bp.completed_at, bp.progress,
+                       b.title, b.xp, b.tags, b.difficulty_filter,
+                       u.display_name
+                FROM bounty_progress bp
+                JOIN bounties b ON b.bounty_id = bp.bounty_id
+                JOIN users u ON u.username = bp.username
+                WHERE bp.xp_awarded = 1
+                ORDER BY bp.completed_at DESC
+                LIMIT ?
+                """,
+                [limit],
+            ).fetchall()
+            feed = [_row_to_dict(r) for r in rows]
+            return {"success": True, "data": feed}
+        except Exception as e:
+            error(f"get_bounty_feed failed: {e}")
             return {"success": False, "error": str(e)}
         finally:
             conn.close()
 
     @staticmethod
     def update_bounty_progress(username: str, bounty_id: str, new_progress: int,
-                               xp_reward: int = 0) -> Dict:
-        """Upsert bounty progress. Awards XP if newly completed."""
+                               xp_reward: int = 0, already_awarded: bool = False) -> Dict:
+        """Upsert bounty progress. Awards XP exactly once on first completion (idempotent)."""
         norm_user = username.lower()
         conn = get_db()
         try:
-            # Check previous progress
+            # Check previous state
             prev = conn.execute(
-                "SELECT progress FROM bounty_progress WHERE bounty_id = ? AND username = ?",
+                "SELECT progress, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
                 [bounty_id, norm_user],
             ).fetchone()
-            prev_progress = prev["progress"] if prev else 0
+            prev_progress = prev["progress"]   if prev else 0
+            xp_already    = prev["xp_awarded"] if prev else 0
 
             # Get bounty count requirement
             bounty_row = conn.execute(
@@ -846,28 +861,41 @@ class BountyOperations:
                 return {"success": False, "error": "Bounty not found"}
             required_count = bounty_row["count"]
 
-            conn.execute(
-                """
-                INSERT INTO bounty_progress (bounty_id, username, progress)
-                VALUES (?,?,?)
-                ON CONFLICT(bounty_id, username) DO UPDATE SET progress = excluded.progress
-                """,
-                [bounty_id, norm_user, new_progress],
-            )
+            just_completed = (prev_progress < required_count and new_progress >= required_count)
+            award_xp_now   = just_completed and xp_reward > 0 and not xp_already and not already_awarded
+
+            if just_completed:
+                conn.execute(
+                    """
+                    INSERT INTO bounty_progress (bounty_id, username, progress, xp_awarded, completed_at)
+                    VALUES (?,?,?,1,datetime('now'))
+                    ON CONFLICT(bounty_id, username) DO UPDATE SET
+                        progress     = excluded.progress,
+                        xp_awarded   = 1,
+                        completed_at = COALESCE(bounty_progress.completed_at, datetime('now'))
+                    """,
+                    [bounty_id, norm_user, new_progress],
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO bounty_progress (bounty_id, username, progress, xp_awarded, completed_at)
+                    VALUES (?,?,?,0,NULL)
+                    ON CONFLICT(bounty_id, username) DO UPDATE SET progress = excluded.progress
+                    """,
+                    [bounty_id, norm_user, new_progress],
+                )
             conn.commit()
 
-            just_completed = prev_progress < required_count and new_progress >= required_count
-            if just_completed and xp_reward > 0:
+            if award_xp_now:
                 UserOperations.award_xp(norm_user, xp_reward)
                 info(f"✅ {norm_user} completed bounty {bounty_id}, awarded {xp_reward} XP")
-                return {
-                    "success": True, "progress": new_progress,
-                    "completed": True, "xp_awarded": xp_reward,
-                }
 
             return {
-                "success": True, "progress": new_progress,
-                "completed": just_completed,
+                "success":          True,
+                "progress":         new_progress,
+                "completed":        just_completed,
+                "xp_awarded":       xp_reward if award_xp_now else 0,
                 "progress_percent": (new_progress / required_count * 100) if required_count > 0 else 0,
             }
         except Exception as e:

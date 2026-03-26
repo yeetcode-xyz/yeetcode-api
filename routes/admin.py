@@ -210,3 +210,56 @@ async def trigger_backup(
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# Canonical bounty seed data — update this list when adding new bounties
+BOUNTY_SEED = [
+    # (bounty_id, title, description, slug, metric, count, start_date, expiry_date, xp, tags, difficulty_filter)
+    ("bounty001", "Solve 3 Medium Problems",               "Solve any 3 medium LeetCode problems.",                         None, "medium", 3, 1752278400, 1762837412,  900, None,                  None),
+    ("bounty002", "Solve 6 Easy BST Problems",             "Solve 6 LeetCode problems tagged with Binary Tree, Easy.",      None, "tag",    6, 1752278400, 1756613954,  750, "Binary Tree",         "Easy"),
+    ("bounty003", "Solve 1 Hard Graph Problem",            "Solve a Hard LeetCode problem tagged with Graph.",              None, "tag",    1, 1752278400, 1756613954,  600, "Graph",               "Hard"),
+    ("bounty004", "Solve 5 Easy Problems",                 "Solve any 5 Easy LeetCode problems.",                          None, "easy",   6, 1752278400, 1756613954,  600, None,                  None),
+    ("bounty005", "Solve 7 Problems in a Week",            "Solve 7 LeetCode problems in any 7-day rolling window.",       None, "weekly", 7, 1752278400, 1762837412,  850, None,                  None),
+    ("bounty006", "Solve 4 DP Problems",                   "Solve any 4 problems tagged with Dynamic Programming.",        None, "tag",    4, 1752278400, 1762837412,  850, "Dynamic Programming", None),
+    ("bounty007", "Solve 3 Medium Binary Search Problems", "Solve 3 Medium problems tagged with Binary Search.",           None, "tag",    3, 1752278400, 1762837412, 1000, "Binary Search",       "Medium"),
+    ("bounty008", "Solve 5 Graph Problems",                "Solve 5 LeetCode problems tagged with Graph.",                 None, "tag",    5, 1752278400, 1762837412, 1100, "Graph",               None),
+    ("bounty009", "Solve 2 Hard Problems",                 "Solve any 2 Hard LeetCode problems.",                          None, "hard",   2, 1752278400, 1756613954, 1200, None,                  None),
+    ("bounty010", "Solve 5 Daily Problems",                "Complete the daily challenge 5 times.",                        None, "daily",  5, 1752278400, 1753660800, 1000, None,                  None),
+]
+
+
+@router.post("/seed-bounties")
+async def seed_bounties(
+    api_key: str = Depends(verify_api_key)
+):
+    """Reset bounties table with canonical data and wipe all bounty progress.
+    Safe to re-run — uses INSERT OR REPLACE so nothing is lost on bounties,
+    but bounty_progress IS fully wiped.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        # Wipe all stale progress
+        conn.execute("DELETE FROM bounty_progress")
+
+        # Upsert all canonical bounties
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO bounties
+                (bounty_id, title, description, slug, metric, count, start_date, expiry_date, xp, tags, difficulty_filter)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            BOUNTY_SEED,
+        )
+        conn.commit()
+        count = conn.execute("SELECT COUNT(*) as n FROM bounties").fetchone()["n"]
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Seeded {len(BOUNTY_SEED)} bounties, wiped bounty_progress",
+            "bounties_in_db": count,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

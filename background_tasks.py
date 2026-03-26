@@ -7,7 +7,7 @@ import logging
 import random
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 import os
 
@@ -78,6 +78,89 @@ def fetch_user_stats(username: str) -> Optional[Dict]:
             hard = count
 
     return {"easy": easy, "medium": medium, "hard": hard}
+
+
+def fetch_user_tag_stats(username: str) -> Optional[Dict[str, int]]:
+    """Fetch per-tag solved counts from LeetCode.
+    Returns {tagName: problemsSolved} or None if user not found, {} on transient error.
+    """
+    query = """
+      query skillStats($username: String!) {
+        matchedUser(username: $username) {
+          tagProblemCounts {
+            advanced     { tagName problemsSolved }
+            intermediate { tagName problemsSolved }
+            fundamental  { tagName problemsSolved }
+          }
+        }
+      }
+    """
+    try:
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": query, "variables": {"username": username}},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        log.error(f"Error fetching tag stats for {username}: {e}")
+        return {}
+
+    matched_user = (data.get("data") or {}).get("matchedUser")
+    if matched_user is None:
+        return None
+
+    counts: Dict[str, int] = {}
+    tag_data = (matched_user.get("tagProblemCounts") or {})
+    for category in ("advanced", "intermediate", "fundamental"):
+        for item in (tag_data.get(category) or []):
+            tag_name = item.get("tagName")
+            solved   = item.get("problemsSolved", 0)
+            if tag_name:
+                counts[tag_name] = solved
+    return counts
+
+
+def fetch_user_weekly_count(username: str) -> int:
+    """Count unique problems solved by the user in the last 7 days.
+    Returns 0 on any error.
+    """
+    query = """
+      query recentAcSubmissions($username: String!, $limit: Int!) {
+        recentAcSubmissionList(username: $username, limit: $limit) {
+          titleSlug
+          timestamp
+        }
+      }
+    """
+    try:
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": query, "variables": {"username": username, "limit": 100}},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        log.error(f"Error fetching weekly count for {username}: {e}")
+        return 0
+
+    submissions = (data.get("data") or {}).get("recentAcSubmissionList") or []
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=7)
+    seen: set = set()
+    for sub in submissions:
+        ts = sub.get("timestamp")
+        slug = sub.get("titleSlug")
+        if not ts or not slug:
+            continue
+        try:
+            sub_dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        except Exception:
+            continue
+        if sub_dt >= cutoff:
+            seen.add(slug)
+    return len(seen)
 
 
 def check_daily_completion(username: str) -> Optional[str]:
@@ -191,6 +274,16 @@ async def process_single_user(username: str) -> bool:
             except Exception as e:
                 log.warning(f"Rank overtake push failed for {username}: {e}")
 
+        # Cache tag stats + weekly count (used by bounty task — reads from DB, no extra LeetCode calls)
+        tag_stats_result = await asyncio.to_thread(fetch_user_tag_stats, username)
+        if tag_stats_result is not None and tag_stats_result != {}:
+            UserOperations.update_user_data(username.lower(), {
+                "tag_stats": json.dumps(tag_stats_result),
+            })
+
+        weekly_count = await asyncio.to_thread(fetch_user_weekly_count, username)
+        UserOperations.update_user_data(username.lower(), {"weekly_solved": weekly_count})
+
         # Check daily completion
         today      = datetime.utcnow().strftime("%Y-%m-%d")
         last_date  = user_data.get("last_completed_date")
@@ -246,30 +339,64 @@ async def update_user_stats():
 # TASK 2: Update Bounty Progress
 # ========================================
 
-def get_user_metric_value(user_data: Dict, metric: str) -> int:
+def get_user_metric_value(user_data: Dict, bounty: Dict, conn, username: str) -> int:
+    """Compute a user's progress value for a bounty. Reads only from user_data (DB-cached)."""
+    metric = (bounty.get("metric") or "total").lower()
+    tag    = bounty.get("tags")
+
     if metric == "easy":
         return int(user_data.get("easy",   0) or 0)
-    elif metric == "medium":
+    if metric == "medium":
         return int(user_data.get("medium", 0) or 0)
-    elif metric == "hard":
+    if metric == "hard":
         return int(user_data.get("hard",   0) or 0)
-    else:
-        return (int(user_data.get("easy",   0) or 0) +
-                int(user_data.get("medium", 0) or 0) +
-                int(user_data.get("hard",   0) or 0))
+    if metric == "weekly":
+        return int(user_data.get("weekly_solved", 0) or 0)
+    if metric == "daily":
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM daily_completions WHERE username = ?",
+                [username.lower()],
+            ).fetchone()
+            return row["c"] if row else 0
+        except Exception:
+            return 0
+    if metric == "tag":
+        raw = user_data.get("tag_stats") or "{}"
+        try:
+            stats = json.loads(raw)
+        except Exception:
+            return 0
+        return stats.get(tag, 0) if tag else 0
+    # default: total
+    return (int(user_data.get("easy",   0) or 0) +
+            int(user_data.get("medium", 0) or 0) +
+            int(user_data.get("hard",   0) or 0))
 
 
 async def update_bounty_progress():
-    """Background task: Check all users' bounty progress. Runs every 5 minutes."""
+    """Background task: Check all users' bounty progress. Runs every 5 minutes.
+    Reads only from DB — no LeetCode API calls (tag/weekly stats cached by update_user_stats).
+    """
     log.info("🎯 Starting bounty progress update task...")
 
     try:
-        bounties_result = BountyOperations.get_all_bounties()
-        if not bounties_result.get("success"):
-            log.error("Failed to fetch bounties")
+        # Load active bounties only
+        now = int(datetime.utcnow().timestamp())
+        conn = get_db()
+        try:
+            bounty_rows = conn.execute(
+                "SELECT * FROM bounties WHERE start_date <= ? AND expiry_date >= ?",
+                [now, now],
+            ).fetchall()
+        finally:
+            conn.close()
+
+        bounties = [dict(r) for r in bounty_rows]
+        if not bounties:
+            log.info("📦 No active bounties to process")
             return
-        bounties = bounties_result.get("data", [])
-        log.info(f"📦 Loaded {len(bounties)} bounties")
+        log.info(f"📦 Loaded {len(bounties)} active bounties")
 
         users_result = UserOperations.get_all_users()
         if not users_result.get("success"):
@@ -284,62 +411,87 @@ async def update_bounty_progress():
         log.info(f"👥 Processing {len(users)} users...")
 
         completion_count = 0
+        progress_count   = 0
 
         for user in users:
             username = user.get("username")
             if not username:
                 continue
 
-            for bounty in bounties:
-                # bounty_id is the column name; also aliased as bountyId/id for compat
-                bounty_id = bounty.get("bounty_id") or bounty.get("bountyId") or bounty.get("id")
-                if not bounty_id:
-                    log.warning(f"⚠️ Skipping bounty with missing ID: {list(bounty.keys())}")
-                    continue
+            conn = get_db()
+            try:
+                for bounty in bounties:
+                    bounty_id = bounty.get("bounty_id")
+                    if not bounty_id:
+                        continue
 
-                metric         = (bounty.get("metric") or "total").lower()
-                required_count = int(bounty.get("count") or 0)
-                xp_reward      = int(bounty.get("xp") or 0)
+                    required_count = int(bounty.get("count") or 0)
+                    xp_reward      = int(bounty.get("xp") or 0)
 
-                user_value = get_user_metric_value(user, metric)
+                    new_progress = get_user_metric_value(user, bounty, conn, username)
 
-                # Check current progress from DB
-                conn = get_db()
-                try:
-                    prev = conn.execute(
-                        "SELECT progress FROM bounty_progress WHERE bounty_id = ? AND username = ?",
+                    # Fetch previous progress + completion state
+                    prev_row = conn.execute(
+                        "SELECT progress, xp_awarded FROM bounty_progress WHERE bounty_id = ? AND username = ?",
                         [bounty_id, username.lower()],
                     ).fetchone()
-                    prev_progress = prev["progress"] if prev else 0
-                finally:
-                    conn.close()
+                    prev_progress = prev_row["progress"]   if prev_row else 0
+                    xp_already    = prev_row["xp_awarded"] if prev_row else 0
 
-                # Already completed
-                if prev_progress >= required_count and required_count > 0:
-                    continue
+                    # Never decrease progress (guards against transient API gaps)
+                    if new_progress < prev_progress:
+                        continue
 
-                if user_value >= required_count:
+                    # No change — skip
+                    if new_progress == prev_progress:
+                        continue
+
+                    # 80% milestone notification (fire only when crossing the threshold)
+                    if required_count > 0:
+                        old_pct = (prev_progress / required_count) * 100
+                        new_pct = (new_progress  / required_count) * 100
+                        if old_pct < 80 <= new_pct and new_pct < 100:
+                            remaining = required_count - new_progress
+                            try:
+                                from push_service import send_push
+                                bounty_title = bounty.get("title") or "a bounty"
+                                send_push(
+                                    username,
+                                    "🔥 Almost there!",
+                                    f"Only {remaining} more to complete '{bounty_title}'",
+                                )
+                            except Exception:
+                                pass
+
                     result = BountyOperations.update_bounty_progress(
-                        username, bounty_id, user_value, xp_reward
+                        username, bounty_id, new_progress, xp_reward,
+                        already_awarded=bool(xp_already),
                     )
                     if result.get("success"):
-                        completion_count += 1
-                        log.info(
-                            f"✅ {username} completed bounty {bounty_id} "
-                            f"({metric}: {user_value}/{required_count})"
-                        )
-                        try:
-                            from push_service import send_push
-                            bounty_title = bounty.get("title") or "a bounty"
-                            send_push(
-                                username,
-                                "🎯 Bounty Complete!",
-                                f"You earned {xp_reward} XP for completing '{bounty_title}'",
+                        progress_count += 1
+                        if result.get("completed"):
+                            completion_count += 1
+                            log.info(
+                                f"✅ {username} completed bounty {bounty_id} "
+                                f"(progress: {new_progress}/{required_count})"
                             )
-                        except Exception:
-                            pass
+                            try:
+                                from push_service import send_push
+                                bounty_title = bounty.get("title") or "a bounty"
+                                send_push(
+                                    username,
+                                    "🎯 Bounty Complete!",
+                                    f"You earned {xp_reward} XP for completing '{bounty_title}'",
+                                )
+                            except Exception:
+                                pass
+            finally:
+                conn.close()
 
-        log.info(f"🏁 Bounty update complete: {completion_count} completions detected")
+        log.info(
+            f"🏁 Bounty update complete: {completion_count} completions, "
+            f"{progress_count} progress updates"
+        )
 
     except Exception as e:
         log.error(f"❌ Error in update_bounty_progress: {e}")
