@@ -218,7 +218,7 @@ BOUNTY_SEED = [
     ("bounty001", "Solve 3 Medium Problems",               "Solve any 3 medium LeetCode problems.",                         None, "medium", 3, 1774488273, 1779681600,  900, None,                  None),
     ("bounty002", "Solve 6 Easy BST Problems",             "Solve 6 LeetCode problems tagged with Binary Tree, Easy.",      None, "tag",    6, 1774488273, 1779681600,  750, "Binary Tree",         "Easy"),
     ("bounty003", "Solve 1 Hard Graph Problem",            "Solve a Hard LeetCode problem tagged with Graph.",              None, "tag",    1, 1774488273, 1779681600,  600, "Graph",               "Hard"),
-    ("bounty004", "Solve 5 Easy Problems",                 "Solve any 5 Easy LeetCode problems.",                          None, "easy",   6, 1774488273, 1779681600,  600, None,                  None),
+    ("bounty004", "Solve 5 Easy Problems",                 "Solve any 5 Easy LeetCode problems.",                          None, "easy",   5, 1774488273, 1779681600,  600, None,                  None),
     ("bounty005", "Solve 7 Problems in a Week",            "Solve 7 LeetCode problems in any 7-day rolling window.",       None, "weekly", 7, 1774488273, 1779681600,  850, None,                  None),
     ("bounty006", "Solve 4 DP Problems",                   "Solve any 4 problems tagged with Dynamic Programming.",        None, "tag",    4, 1774488273, 1779681600,  850, "Dynamic Programming", None),
     ("bounty007", "Solve 3 Medium Binary Search Problems", "Solve 3 Medium problems tagged with Binary Search.",           None, "tag",    3, 1774488273, 1779681600, 1000, "Binary Search",       "Medium"),
