@@ -1535,6 +1535,8 @@ class DuelOperations:
             inv = dict(row)
             if int(time.time()) > inv["expires_at"]:
                 raise Exception("Invite has expired")
+            if inv["challenger"].lower() == username.lower():
+                raise Exception("You can't duel yourself")
 
             from background_tasks import fetch_random_problem
             difficulty = inv.get("difficulty", "EASY").upper()
