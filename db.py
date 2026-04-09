@@ -131,6 +131,37 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     created_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_push_username ON push_subscriptions(username);
+
+CREATE TABLE IF NOT EXISTS blitz_questions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    category    TEXT NOT NULL,
+    difficulty  TEXT NOT NULL DEFAULT 'easy',
+    question    TEXT NOT NULL,
+    code        TEXT,
+    options     TEXT NOT NULL,
+    answer      TEXT NOT NULL,
+    explanation TEXT
+);
+
+CREATE TABLE IF NOT EXISTS blitz_challenges (
+    token          TEXT PRIMARY KEY,
+    challenger     TEXT NOT NULL,
+    question_ids   TEXT NOT NULL,
+    time_limit_ms  INTEGER NOT NULL DEFAULT 60000,
+    created_at     TEXT NOT NULL,
+    expires_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS blitz_scores (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    username     TEXT NOT NULL,
+    challenge_token TEXT,
+    score        INTEGER NOT NULL,
+    total        INTEGER NOT NULL,
+    time_ms      INTEGER NOT NULL,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blitz_scores_user ON blitz_scores(username);
 """
 
 
@@ -197,12 +228,277 @@ def _migrate_add_columns(conn):
         ("bounty_progress", "baseline",            "INTEGER DEFAULT 0"),
         ("bounty_progress", "xp_awarded",          "INTEGER DEFAULT 0"),
         ("bounty_progress", "completed_at",        "TEXT DEFAULT NULL"),
+        ("blitz_challenges", "time_limit_ms",       "INTEGER NOT NULL DEFAULT 60000"),
     ]
     for table, col, typedef in additions:
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}")
         except Exception:
             pass  # column already exists
+    conn.commit()
+
+
+BLITZ_QUESTIONS = [
+    # ── Output questions ──────────────────────────────────────────────────────
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": "print(1 + 2 * 3)",
+        "options": '["9","7","6","8"]',
+        "answer": "7",
+        "explanation": "Multiplication has higher precedence than addition. 2*3=6, then 1+6=7."
+    },
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": 'print("hello"[1:3])',
+        "options": '["he","el","ell","elo"]',
+        "answer": "el",
+        "explanation": "Slicing [1:3] returns characters at index 1 and 2 (not 3)."
+    },
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": 'print(bool(""))',
+        "options": '["True","False","None","Error"]',
+        "answer": "False",
+        "explanation": "Empty strings are falsy in Python."
+    },
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": "print(10 // 3)",
+        "options": '["3.33","3","4","3.0"]',
+        "answer": "3",
+        "explanation": "// is floor (integer) division. 10 // 3 = 3."
+    },
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": "x = [1, 2, 3]\nprint(x[-1])",
+        "options": '["1","2","3","Error"]',
+        "answer": "3",
+        "explanation": "Negative indexing: -1 is the last element."
+    },
+    {
+        "category": "output", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": 'print("ab" * 3)',
+        "options": '["ababab","ab3","aabbcc","Error"]',
+        "answer": "ababab",
+        "explanation": "String multiplication repeats the string n times."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "a = [1, 2, 3]\nb = a\nb.append(4)\nprint(len(a))",
+        "options": '["3","4","2","Error"]',
+        "answer": "4",
+        "explanation": "b = a copies the reference, not the list. Both point to the same object."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": 'print(type(1/2).__name__)',
+        "options": '["int","float","Fraction","number"]',
+        "answer": "float",
+        "explanation": "In Python 3, / always returns a float. Use // for integer division."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "print([i**2 for i in range(4)])",
+        "options": '["[0,1,4,9]","[1,4,9,16]","[0,1,2,3]","[1,2,3,4]"]',
+        "answer": "[0,1,4,9]",
+        "explanation": "range(4) is 0,1,2,3. Squaring gives 0,1,4,9."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "d = {'a': 1, 'b': 2}\nprint(d.get('c', 0))",
+        "options": '["None","0","Error","KeyError"]',
+        "answer": "0",
+        "explanation": "dict.get(key, default) returns the default if the key doesn't exist."
+    },
+    # ── Time complexity ───────────────────────────────────────────────────────
+    {
+        "category": "complexity", "difficulty": "easy",
+        "question": "What is the time complexity of binary search?",
+        "code": None,
+        "options": '["O(n)","O(log n)","O(n log n)","O(1)"]',
+        "answer": "O(log n)",
+        "explanation": "Binary search halves the search space each step → O(log n)."
+    },
+    {
+        "category": "complexity", "difficulty": "easy",
+        "question": "What is the time complexity of accessing an element in an array by index?",
+        "code": None,
+        "options": '["O(n)","O(log n)","O(1)","O(n²)"]',
+        "answer": "O(1)",
+        "explanation": "Arrays are stored contiguously. Index access is a direct memory lookup."
+    },
+    {
+        "category": "complexity", "difficulty": "easy",
+        "question": "What is the worst-case time complexity of bubble sort?",
+        "code": None,
+        "options": '["O(n)","O(n log n)","O(n²)","O(log n)"]',
+        "answer": "O(n²)",
+        "explanation": "Bubble sort compares every pair — n*(n-1)/2 comparisons → O(n²)."
+    },
+    {
+        "category": "complexity", "difficulty": "medium",
+        "question": "What is the time complexity of merge sort?",
+        "code": None,
+        "options": '["O(n)","O(n²)","O(n log n)","O(log n)"]',
+        "answer": "O(n log n)",
+        "explanation": "Merge sort divides (log n levels) and merges (O(n) per level) → O(n log n)."
+    },
+    {
+        "category": "complexity", "difficulty": "medium",
+        "question": "What is the average time complexity of a hash table lookup?",
+        "code": None,
+        "options": '["O(n)","O(log n)","O(n log n)","O(1)"]',
+        "answer": "O(1)",
+        "explanation": "Hash tables use a hash function to jump directly to the bucket."
+    },
+    {
+        "category": "complexity", "difficulty": "hard",
+        "question": "What is the time complexity of naive recursive Fibonacci?",
+        "code": "def fib(n):\n    if n <= 1: return n\n    return fib(n-1) + fib(n-2)",
+        "options": '["O(n)","O(n²)","O(2ⁿ)","O(n log n)"]',
+        "answer": "O(2ⁿ)",
+        "explanation": "Each call branches into 2 more calls, creating an exponential call tree."
+    },
+    # ── Concept MCQ ───────────────────────────────────────────────────────────
+    {
+        "category": "concept", "difficulty": "easy",
+        "question": "Which data structure follows LIFO (Last In, First Out)?",
+        "code": None,
+        "options": '["Queue","Stack","Heap","Linked List"]',
+        "answer": "Stack",
+        "explanation": "A stack pops the most recently pushed item first — like a stack of plates."
+    },
+    {
+        "category": "concept", "difficulty": "easy",
+        "question": "Which traversal visits the root node first?",
+        "code": None,
+        "options": '["Inorder","Postorder","Preorder","Level-order"]',
+        "answer": "Preorder",
+        "explanation": "Preorder: Root → Left → Right."
+    },
+    {
+        "category": "concept", "difficulty": "easy",
+        "question": "What does a queue use?",
+        "code": None,
+        "options": '["LIFO","FIFO","FILO","LILO"]',
+        "answer": "FIFO",
+        "explanation": "Queue is First In, First Out — like a line at a checkout."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "Which sorting algorithm is NOT stable?",
+        "code": None,
+        "options": '["Merge Sort","Bubble Sort","Insertion Sort","Quick Sort"]',
+        "answer": "Quick Sort",
+        "explanation": "Quick sort's partitioning can change the relative order of equal elements."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "Which data structure is best for implementing a priority queue?",
+        "code": None,
+        "options": '["Stack","Queue","Heap","Array"]',
+        "answer": "Heap",
+        "explanation": "A min/max heap gives O(log n) insert and O(1) peek of the top priority item."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "In a binary search tree, where is the smallest element?",
+        "code": None,
+        "options": '["Root","Rightmost node","Leftmost node","Any leaf"]',
+        "answer": "Leftmost node",
+        "explanation": "In a BST, all left children are smaller. The leftmost node is the minimum."
+    },
+    # ── Fill in the blank ─────────────────────────────────────────────────────
+    {
+        "category": "fill_blank", "difficulty": "easy",
+        "question": "Complete: to check if a key exists in a Python dict:\n`if key ___ my_dict:`",
+        "code": None,
+        "options": '["in","==","has","contains"]',
+        "answer": "in",
+        "explanation": "The `in` operator checks for key membership in dicts, sets, and lists."
+    },
+    {
+        "category": "fill_blank", "difficulty": "easy",
+        "question": "Complete: to add an item to a Python list:\n`my_list.___(item)`",
+        "code": None,
+        "options": '["append","push","add","insert"]',
+        "answer": "append",
+        "explanation": "list.append(item) adds an item to the end of the list."
+    },
+    {
+        "category": "fill_blank", "difficulty": "easy",
+        "question": "Complete: to remove duplicates from a list:\n`unique = list(___(my_list))`",
+        "code": None,
+        "options": '["set","dict","sorted","unique"]',
+        "answer": "set",
+        "explanation": "Converting to a set removes duplicates, then back to list preserves the type."
+    },
+    {
+        "category": "fill_blank", "difficulty": "medium",
+        "question": "Complete: to get the length of a string s in Python:\n`n = ___(s)`",
+        "code": None,
+        "options": '["len","size","count","length"]',
+        "answer": "len",
+        "explanation": "len() is Python's built-in function for the length of any sequence."
+    },
+    {
+        "category": "fill_blank", "difficulty": "medium",
+        "question": "Complete: to sort a list in reverse order:\n`my_list.sort(reverse=___)`",
+        "code": None,
+        "options": '["True","False","1","desc"]',
+        "answer": "True",
+        "explanation": "reverse=True sorts in descending order."
+    },
+    # ── Bug fix ───────────────────────────────────────────────────────────────
+    {
+        "category": "bug", "difficulty": "easy",
+        "question": "This function should return the sum of a list. What's the bug?",
+        "code": "def total(nums):\n    sum = 0\n    for n in nums:\n        sum + n\n    return sum",
+        "options": '["sum is a reserved word","sum + n should be sum += n","return should be outside the loop","range() is missing"]',
+        "answer": "sum + n should be sum += n",
+        "explanation": "`sum + n` computes but discards the result. `sum += n` actually updates sum."
+    },
+    {
+        "category": "bug", "difficulty": "easy",
+        "question": "This should print numbers 1 to 5. What's wrong?",
+        "code": "for i in range(5):\n    print(i)",
+        "options": '["range(5) gives 0-4, should be range(1,6)","print should be print(i+1) only","for loop syntax is wrong","Nothing, it is correct"]',
+        "answer": "range(5) gives 0-4, should be range(1,6)",
+        "explanation": "range(5) produces 0,1,2,3,4. Use range(1,6) to get 1,2,3,4,5."
+    },
+    {
+        "category": "bug", "difficulty": "medium",
+        "question": "This recursive function causes a stack overflow. Why?",
+        "code": "def countdown(n):\n    print(n)\n    countdown(n - 1)",
+        "options": '["n should be n+1","Missing base case to stop recursion","print should come after recursive call","countdown is misspelled"]',
+        "answer": "Missing base case to stop recursion",
+        "explanation": "Without `if n == 0: return`, the function recurses forever until a stack overflow."
+    },
+]
+
+
+def _seed_blitz_questions(conn):
+    """Insert blitz questions if the table is empty."""
+    count = conn.execute("SELECT COUNT(*) FROM blitz_questions").fetchone()[0]
+    if count > 0:
+        return
+    for q in BLITZ_QUESTIONS:
+        conn.execute(
+            """INSERT INTO blitz_questions (category, difficulty, question, code, options, answer, explanation)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [q["category"], q["difficulty"], q["question"], q.get("code"),
+             q["options"], q["answer"], q.get("explanation")],
+        )
     conn.commit()
 
 
@@ -218,4 +514,5 @@ def init_db():
     conn.commit()
     _migrate_blob_integers(conn)
     _migrate_add_columns(conn)
+    _seed_blitz_questions(conn)
     conn.close()
