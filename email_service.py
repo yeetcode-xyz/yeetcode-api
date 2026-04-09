@@ -4,6 +4,7 @@ Email operations for YeetCode using Resend
 
 import os
 import time
+import requests
 from typing import Dict
 import resend
 from dotenv import load_dotenv
@@ -14,15 +15,25 @@ load_dotenv()
 # Initialize Resend
 resend.api_key = os.getenv("RESEND_API_KEY")
 
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DEBUG_MODE = os.getenv("DEBUG_MODE", "false").lower() == "true"
+
+
+def _discord_fallback(content: str):
+    """Post to Discord webhook when Resend is not configured."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": content}, timeout=5)
+    except Exception:
+        pass
 
 
 def send_email_otp(email: str, code: str) -> Dict:
     """Send OTP email using Resend"""
     try:
         if not resend.api_key:
-            if DEBUG_MODE:
-                print(f"[DEBUG] No Resend API key, using mock email for development")
+            _discord_fallback(f"📧 **[NO RESEND — pretend this is an email]**\n**To:** {email}\n**Subject:** Your YeetCode Verification Code\n**Code:** `{code}`")
             return {"success": True, "messageId": f"mock-id-{int(time.time())}"}
 
         if DEBUG_MODE:
@@ -77,8 +88,7 @@ def send_duel_invite(email: str, challenger_name: str, difficulty: str, invite_u
     """Send a duel invite email to someone (may or may not have a YeetCode account)."""
     try:
         if not resend.api_key:
-            if DEBUG_MODE:
-                print(f"[DEBUG] No Resend key — mock duel invite to {email}, url={invite_url}")
+            _discord_fallback(f"📧 **[NO RESEND — pretend this is an email]**\n**To:** {email}\n**Subject:** ⚔️ {challenger_name} wants to duel you on YeetCode!\n**Difficulty:** {difficulty}\n**Invite URL:** {invite_url}")
             return {"success": True, "messageId": f"mock-duel-{int(time.time())}"}
 
         diff_colors = {"Easy": "#16a34a", "Medium": "#d97706", "Hard": "#dc2626"}

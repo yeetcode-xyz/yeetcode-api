@@ -96,9 +96,7 @@ if not PORT_STR:
     raise ValueError("PORT environment variable is required")
 PORT = int(PORT_STR)
 
-HOST = os.getenv("HOST")
-if not HOST:
-    raise ValueError("HOST environment variable is required")
+HOST = "0.0.0.0"
 
 # Include routers
 app.include_router(auth_router)
