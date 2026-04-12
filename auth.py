@@ -22,12 +22,12 @@ rate_limit_store: Dict[str, float] = defaultdict(lambda: 0)
 
 def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify the API key from the Authorization header"""
-    api_key = os.getenv("YETCODE_API_KEY")
-    
+    api_key = os.getenv("YEETCODE_API_KEY") or os.getenv("YETCODE_API_KEY")
+
     if not api_key:
         raise HTTPException(
             status_code=500,
-            detail="Server configuration error: YETCODE_API_KEY not set"
+            detail="Server configuration error: YEETCODE_API_KEY not set"
         )
     
     if credentials.credentials != api_key:

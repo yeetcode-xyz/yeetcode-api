@@ -20,7 +20,7 @@ router = APIRouter(tags=["Admin"], prefix="/admin")
 
 def verify_api_key_query(api_key: str = Query(...)):
     """Verify API key from query parameter for browser-friendly endpoints"""
-    expected_key = os.getenv("YETCODE_API_KEY")
+    expected_key = os.getenv("YEETCODE_API_KEY") or os.getenv("YETCODE_API_KEY")
     if not expected_key:
         raise HTTPException(status_code=500, detail="Server configuration error")
     if api_key != expected_key:
