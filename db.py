@@ -229,6 +229,8 @@ def _migrate_add_columns(conn):
         ("bounty_progress", "xp_awarded",          "INTEGER DEFAULT 0"),
         ("bounty_progress", "completed_at",        "TEXT DEFAULT NULL"),
         ("blitz_challenges", "time_limit_ms",       "INTEGER NOT NULL DEFAULT 60000"),
+        ("duels",           "guest_challenger",     "INTEGER DEFAULT 0"),
+        ("duel_invites",    "is_guest",             "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in additions:
         try:

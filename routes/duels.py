@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from models import DuelRequest
 from auth import verify_api_key
-from aws import DuelOperations
+from aws import DuelOperations, UserOperations
 
 router = APIRouter(tags=["Duels"])
 
@@ -308,9 +308,10 @@ async def create_duel_invite_endpoint(
         challenger = request.get("challenger") or request.get("username")
         difficulty = request.get("difficulty", "EASY")
         email      = request.get("email")
+        is_guest   = bool(request.get("is_guest"))
         if not challenger:
             return {"success": False, "error": "challenger is required"}
-        return DuelOperations.create_duel_invite(challenger, difficulty, email)
+        return DuelOperations.create_duel_invite(challenger, difficulty, email, is_guest=is_guest)
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -339,5 +340,42 @@ async def accept_duel_invite_endpoint(
         if not token or not username:
             return {"success": False, "error": "token and username are required"}
         return await asyncio.to_thread(DuelOperations.accept_duel_invite, token, username)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/guest-duel-status")
+async def get_guest_duel_status_endpoint(
+    challenger: str,
+    token: str = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """Status poll for a guest: returns pending_invite, no_duel, or duel."""
+    try:
+        result = DuelOperations.get_guest_duel_status(challenger, token)
+        if result.get("success") and result.get("duel"):
+            result["duel"] = _normalize_duel(result["duel"])
+        return result
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/merge-guest-history")
+async def merge_guest_history_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Merge guest duel history onto a newly-created account.
+
+    Call from the onboarding flow *after* LeetCode ownership is verified.
+    Body: {"new_username": str, "leetcode_username": str}
+    """
+    try:
+        new_username      = request.get("new_username") or request.get("username")
+        leetcode_username = request.get("leetcode_username")
+        if not new_username or not leetcode_username:
+            return {"success": False, "error": "new_username and leetcode_username are required"}
+        return UserOperations.merge_guest_history(new_username, leetcode_username)
     except Exception as e:
         return {"success": False, "error": str(e)}
