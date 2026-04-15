@@ -240,7 +240,92 @@ def _migrate_add_columns(conn):
     conn.commit()
 
 
-BLITZ_QUESTIONS = [
+DRAG_DROP_QUESTIONS = [
+    {
+        "category": "drag_drop", "difficulty": "easy",
+        "question": "Complete the binary search function:",
+        "code": "def binary_search(arr, target):\n    lo, hi = 0, len(arr) - 1\n    while lo [BLANK] hi:\n        mid = (lo + hi) [BLANK] 2\n        if arr[mid] == target: return mid\n        elif arr[mid] < target: lo = mid + 1\n        else: hi = mid - 1\n    return -1",
+        "options": '["<=", "//", "<", "/", ">=", "**"]',
+        "answer": '["<=", "//"]',
+        "explanation": "Use <= to handle lo==hi case; // for integer floor division of midpoint."
+    },
+    {
+        "category": "drag_drop", "difficulty": "easy",
+        "question": "Complete the factorial function:",
+        "code": "def factorial(n):\n    if n [BLANK] 1:\n        return 1\n    return n [BLANK] factorial(n - 1)",
+        "options": '["<=", "*", "==", "+", ">=", "**"]',
+        "answer": '["<=", "*"]',
+        "explanation": "Base case n<=1 returns 1; recursive case multiplies n by factorial(n-1)."
+    },
+    {
+        "category": "drag_drop", "difficulty": "easy",
+        "question": "Complete the palindrome check:",
+        "code": "def is_palindrome(s):\n    s = s.[BLANK]().replace(' ', '')\n    return s == s[BLANK]",
+        "options": '["lower", "[::-1]", "upper", "[::1]", "strip", "reverse()"]',
+        "answer": '["lower", "[::-1]"]',
+        "explanation": "Lowercase first to normalize; s[::-1] reverses the string via slice notation."
+    },
+    {
+        "category": "drag_drop", "difficulty": "easy",
+        "question": "Complete the FizzBuzz core logic:",
+        "code": "for i in range(1, 101):\n    if i [BLANK] 15 == 0:\n        print('FizzBuzz')\n    elif i % 3 [BLANK] 0:\n        print('Fizz')",
+        "options": '["%", "==", "//", "!=", "<=", ">="]',
+        "answer": '["%", "=="]',
+        "explanation": "% is the modulo operator. Both checks use == to test for a zero remainder."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the bubble sort inner loop:",
+        "code": "def bubble_sort(arr):\n    n = len(arr)\n    for i in range(n):\n        for j in range(0, n - i [BLANK] 1):\n            if arr[j] [BLANK] arr[j + 1]:\n                arr[j], arr[j+1] = arr[j+1], arr[j]",
+        "options": '["-", ">", "+", "<", "//", ">="]',
+        "answer": '["-", ">"]',
+        "explanation": "n-i-1 shrinks the inner range each pass; > swaps when left is greater."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the two-sum hashmap solution:",
+        "code": "def two_sum(nums, target):\n    seen = {}\n    for i, num in [BLANK](nums):\n        comp = target [BLANK] num\n        if comp in seen:\n            return [seen[comp], i]\n        seen[num] = i",
+        "options": '["enumerate", "-", "range", "+", "zip", "*"]',
+        "answer": '["enumerate", "-"]',
+        "explanation": "enumerate gives (index, value) pairs; complement = target - num."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the linked list prepend:",
+        "code": "class Node:\n    def __init__(self, val):\n        self.val = val\n        self.[BLANK] = None\n\ndef prepend(head, val):\n    node = Node(val)\n    node.next = [BLANK]\n    return node",
+        "options": '["next", "head", "val", "prev", "None", "self"]',
+        "answer": '["next", "head"]',
+        "explanation": "Nodes have a next pointer; new node's next points to the current head."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the BFS traversal:",
+        "code": "from collections import deque\ndef bfs(graph, start):\n    visited, queue = set(), [BLANK]([start])\n    while queue:\n        node = queue.[BLANK]()\n        if node not in visited:\n            visited.add(node)\n            queue.extend(graph[node])\n    return visited",
+        "options": '["deque", "popleft", "list", "pop", "append", "dict"]',
+        "answer": '["deque", "popleft"]',
+        "explanation": "deque enables O(1) popleft; popleft() ensures FIFO (queue) behavior."
+    },
+    {
+        "category": "drag_drop", "difficulty": "hard",
+        "question": "Complete the coin change DP solution:",
+        "code": "def coin_change(coins, amount):\n    dp = [float('inf')] * (amount + 1)\n    dp[0] = [BLANK]\n    for coin in coins:\n        for x in range(coin, amount + 1):\n            dp[x] = [BLANK](dp[x], dp[x - coin] + 1)\n    return dp[amount] if dp[amount] != float('inf') else -1",
+        "options": '["0", "min", "1", "max", "-1", "sum"]',
+        "answer": '["0", "min"]',
+        "explanation": "dp[0]=0 (base case: 0 coins needed for amount 0); min picks fewest coins."
+    },
+    {
+        "category": "drag_drop", "difficulty": "hard",
+        "question": "Complete the merge step of merge sort:",
+        "code": "def merge(left, right):\n    result, i, j = [], 0, 0\n    while i < len(left) [BLANK] j < len(right):\n        if left[i] <= right[j]:\n            result.[BLANK](left[i]); i += 1\n        else:\n            result.append(right[j]); j += 1\n    return result + left[i:] + right[j:]",
+        "options": '["and", "append", "or", "extend", "+", "pop"]',
+        "answer": '["and", "append"]',
+        "explanation": "Continue while BOTH arrays have elements (and); append smaller element."
+    },
+]
+
+# ── MCQ questions (commented out for drag_drop testing) ──────────────────────
+# To re-enable: change BLITZ_QUESTIONS below to BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS
+BLITZ_QUESTIONS_MCQ = [
     # ── Output questions ──────────────────────────────────────────────────────
     {
         "category": "output", "difficulty": "easy",
@@ -488,12 +573,18 @@ BLITZ_QUESTIONS = [
     },
 ]
 
+# Testing drag_drop only — change to BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS for production
+BLITZ_QUESTIONS = DRAG_DROP_QUESTIONS
+
 
 def _seed_blitz_questions(conn):
-    """Insert blitz questions if the table is empty."""
+    """Insert blitz questions. Clears and reseeds in DEBUG_MODE for easy dev iteration."""
+    debug = os.getenv("DEBUG_MODE", "false").lower() == "true"
     count = conn.execute("SELECT COUNT(*) FROM blitz_questions").fetchone()[0]
-    if count > 0:
+    if count > 0 and not debug:
         return
+    if debug and count > 0:
+        conn.execute("DELETE FROM blitz_questions")
     for q in BLITZ_QUESTIONS:
         conn.execute(
             """INSERT INTO blitz_questions (category, difficulty, question, code, options, answer, explanation)
