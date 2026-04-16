@@ -573,8 +573,7 @@ BLITZ_QUESTIONS_MCQ = [
     },
 ]
 
-# Testing drag_drop only — change to BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS for production
-BLITZ_QUESTIONS = DRAG_DROP_QUESTIONS
+BLITZ_QUESTIONS = BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS
 
 
 def _seed_blitz_questions(conn):
