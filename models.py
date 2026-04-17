@@ -22,6 +22,8 @@ class UserData(BaseModel):
     username: str
     display_name: Optional[str] = None
     email: Optional[str] = None
+    university: Optional[str] = None
+    is_guest: Optional[bool] = None
     group_id: Optional[str] = None
 
 

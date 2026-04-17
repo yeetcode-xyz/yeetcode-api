@@ -42,7 +42,7 @@ def _safe_int(val, default: int = 0) -> int:
 
 
 _INT_FIELDS = {
-    "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid",
+    "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid", "is_guest",
     "is_wager", "wager_amount", "challenger_wager", "challengee_wager",
     "challenger_time", "challengee_time", "expires_at",
     "count", "expiry_date", "start_date", "xp_reward",
@@ -87,6 +87,7 @@ def _user_row_to_leaderboard(user: Dict) -> Dict:
         "hard":     _safe_int(user.get("hard")),
         "today":    _safe_int(user.get("today")),
         "xp":       _calc_total_xp(user),
+        "is_guest": bool(_safe_int(user.get("is_guest"))),
         "group_id": user.get("group_id"),
     }
 
@@ -101,6 +102,11 @@ def normalize_dynamodb_item(item: Dict) -> Dict:
 # ---------------------------------------------------------------------------
 
 class UserOperations:
+
+    @staticmethod
+    def _build_guest_email(username: str) -> str:
+        safe = username.lower().replace("@", "_at_")
+        return f"guest__{safe}@guest.yeetcode.local"
 
     @staticmethod
     def get_user_data(username: str) -> Optional[Dict]:
@@ -140,14 +146,57 @@ class UserOperations:
 
         conn = get_db()
         try:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO users
-                    (username, email, display_name, university, created_at, updated_at)
-                VALUES (?,?,?,?,?,?)
-                """,
-                (norm_user, norm_email, display_name or username, university, now, now),
-            )
+            existing_email = conn.execute(
+                "SELECT username FROM users WHERE email = ?",
+                [norm_email],
+            ).fetchone()
+            if existing_email and existing_email["username"] != norm_user:
+                raise Exception("An account with this email already exists")
+
+            existing_user = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+
+            if existing_user:
+                existing = _row_to_dict(existing_user)
+                if bool(_safe_int(existing.get("is_guest"))):
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET email = ?, display_name = ?, university = ?, is_guest = 0, updated_at = ?
+                        WHERE username = ?
+                        """,
+                        [
+                            norm_email,
+                            display_name or username,
+                            university,
+                            now,
+                            norm_user,
+                        ],
+                    )
+                else:
+                    if existing.get("email", "").lower() != norm_email:
+                        raise Exception("This username is already associated with another account")
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET display_name = COALESCE(?, display_name),
+                            university = COALESCE(?, university),
+                            updated_at = ?
+                        WHERE username = ?
+                        """,
+                        [display_name, university, now, norm_user],
+                    )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO users
+                        (username, email, display_name, university, is_guest, created_at, updated_at)
+                    VALUES (?,?,?,?,0,?,?)
+                    """,
+                    (norm_user, norm_email, display_name or username, university, now, now),
+                )
             conn.commit()
             row = conn.execute(
                 "SELECT * FROM users WHERE username = ?", [norm_user]
@@ -183,6 +232,63 @@ class UserOperations:
         except Exception as e:
             error(f"update_user_data failed for {username}: {e}")
             return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def create_guest_user(username: str, display_name: str = None) -> Dict:
+        norm_user = username.lower().strip()
+        if not norm_user:
+            raise Exception("Username is required")
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = get_db()
+        try:
+            existing_row = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+
+            if existing_row:
+                existing = _row_to_dict(existing_row)
+                if not bool(_safe_int(existing.get("is_guest"))):
+                    raise Exception("This LeetCode username already has an account. Sign in to continue.")
+                conn.execute(
+                    "UPDATE users SET updated_at = ? WHERE username = ?",
+                    [now, norm_user],
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM users WHERE username = ?",
+                    [norm_user],
+                ).fetchone()
+                return _row_to_dict(row)
+
+            guest_email = UserOperations._build_guest_email(norm_user)
+            conn.execute(
+                """
+                INSERT INTO users
+                    (username, email, display_name, is_guest, created_at, updated_at)
+                VALUES (?,?,?,?,?,?)
+                """,
+                [
+                    norm_user,
+                    guest_email,
+                    display_name or username,
+                    1,
+                    now,
+                    now,
+                ],
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+            return _row_to_dict(row)
+        except Exception as e:
+            error(f"create_guest_user failed for {username}: {e}")
+            raise
         finally:
             conn.close()
 
@@ -1045,15 +1151,16 @@ class DuelOperations:
         duel_id       = str(uuid.uuid4())
         now_iso       = datetime.now(timezone.utc).isoformat()
         expires_at    = int(time.time()) + 3600  # 1 hour
+        challenger_data = UserOperations.get_user_data(norm_user)
+
+        if not challenger_data:
+            raise Exception(f"Challenger not found: {norm_user}")
 
         if is_wager:
-            if guest_challenger:
+            if guest_challenger or bool(_safe_int(challenger_data.get("is_guest"))):
                 raise Exception("Guest users cannot create wager duels")
             if not wager_amount or wager_amount < 25:
                 raise Exception("Wager amount must be at least 25 XP")
-            challenger_data = UserOperations.get_user_data(norm_user)
-            if not challenger_data:
-                raise Exception(f"Challenger not found: {norm_user}")
             if _calc_total_xp(challenger_data) < wager_amount:
                 raise Exception(f"Challenger has insufficient XP (needs {wager_amount})")
 
@@ -1118,6 +1225,8 @@ class DuelOperations:
             if is_wager and challenger_wager > 0:
                 challengee_wager = challenger_wager
                 opp_data = UserOperations.get_user_data(norm_user)
+                if opp_data and bool(_safe_int(opp_data.get("is_guest"))):
+                    raise Exception("Claim your account before accepting wager duels")
                 if not opp_data or _calc_total_xp(opp_data) < challengee_wager:
                     raise Exception(f"You need at least {challengee_wager} XP to accept this wager duel")
 

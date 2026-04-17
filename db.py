@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     email               TEXT UNIQUE NOT NULL,
     display_name        TEXT,
     university          TEXT,
+    is_guest            INTEGER DEFAULT 0,
     group_id            TEXT,
     easy                INTEGER DEFAULT 0,
     medium              INTEGER DEFAULT 0,
@@ -223,6 +224,7 @@ def _migrate_add_columns(conn):
     additions = [
         ("users",           "tag_stats",          "TEXT DEFAULT NULL"),
         ("users",           "weekly_solved",       "INTEGER DEFAULT 0"),
+        ("users",           "is_guest",            "INTEGER DEFAULT 0"),
         ("bounties",        "tags",                "TEXT"),
         ("bounties",        "difficulty_filter",   "TEXT"),
         ("bounty_progress", "baseline",            "INTEGER DEFAULT 0"),
