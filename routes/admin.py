@@ -212,7 +212,7 @@ async def trigger_backup(
         return {"success": False, "error": str(e)}
 
 
-# Canonical bounty seed data — update this list when adding new bounties
+# Canonical bounty seed data — update this list when adding new bounties 
 BOUNTY_SEED = [
     # (bounty_id, title, description, slug, metric, count, start_date, expiry_date, xp, tags, difficulty_filter)
     ("bounty001", "Solve 3 Medium Problems",               "Solve any 3 medium LeetCode problems.",                         None, "medium", 3, 1774488273, 1779681600,  900, None,                  None),
