@@ -1709,16 +1709,28 @@ class DuelOperations:
             if not problem:
                 raise Exception("Could not find a suitable problem — try again")
 
+            is_guest_challenger = bool(_safe_int(inv.get("is_guest")))
             result = DuelOperations.create_duel(
                 inv["challenger"], username,
                 problem["titleSlug"], problem["title"],
                 problem["frontendQuestionId"], problem["difficulty"],
-                guest_challenger=bool(_safe_int(inv.get("is_guest"))),
+                guest_challenger=is_guest_challenger,
             )
 
             # Delete the invite so it can only be used once
             conn.execute("DELETE FROM duel_invites WHERE token = ?", [token])
             conn.commit()
+
+            # Guest has no dashboard — auto-start the duel for them at accept time
+            # so the background poller can detect their LeetCode submissions.
+            # The challengee still clicks "Start Duel" from their dashboard.
+            if is_guest_challenger and result.get("success"):
+                new_duel_id = result.get("data", {}).get("duel_id")
+                if new_duel_id:
+                    try:
+                        DuelOperations.start_duel(inv["challenger"], new_duel_id)
+                    except Exception as e:
+                        error(f"guest auto-start_duel failed for {new_duel_id}: {e}")
 
             return {**result, "challengerName": inv["challenger"]}
         except Exception as e:

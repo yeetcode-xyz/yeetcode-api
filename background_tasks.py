@@ -675,12 +675,16 @@ async def poll_active_duels():
     Background task: Check active duels every 3 seconds.
     For each user in an active duel who hasn't submitted yet,
     poll LeetCode's recent accepted submissions.
+
+    Also auto-starts guest-challenger duels that are stuck in ACCEPTED state:
+    the guest has no dashboard to click "Start Duel" from, so we flip them
+    to ACTIVE with a backdated start_time to capture pre-existing submissions.
     """
     try:
         conn = get_db()
         try:
             rows = conn.execute(
-                "SELECT * FROM duels WHERE status = 'ACTIVE'"
+                "SELECT * FROM duels WHERE status IN ('ACTIVE', 'ACCEPTED')"
             ).fetchall()
         finally:
             conn.close()
@@ -691,6 +695,7 @@ async def poll_active_duels():
         for row in rows:
             duel = dict(row)
             duel_id      = duel.get("duel_id")
+            status       = duel.get("status")
             problem_slug = duel.get("problem_slug")
             challenger   = duel.get("challenger")
             challengee   = duel.get("challengee")
@@ -698,8 +703,43 @@ async def poll_active_duels():
             e_time       = duel.get("challengee_time", -1)
             c_start      = duel.get("challenger_start_time")
             e_start      = duel.get("challengee_start_time")
+            is_guest     = bool(duel.get("guest_challenger") or 0)
 
             if not problem_slug:
+                continue
+
+            # Auto-start guests stuck in ACCEPTED. Backdate the start time so
+            # any submission they already made (since the duel was created)
+            # counts. Cap the backdate to the duel creation time to stay honest.
+            if status == "ACCEPTED" and is_guest and (c_time is None or c_time < 0):
+                from datetime import datetime, timezone
+                created_at = duel.get("created_at")
+                try:
+                    backdate_iso = created_at or datetime.now(timezone.utc).isoformat()
+                except Exception:
+                    backdate_iso = datetime.now(timezone.utc).isoformat()
+                conn = get_db()
+                try:
+                    conn.execute(
+                        """
+                        UPDATE duels
+                        SET status = 'ACTIVE',
+                            challenger_time = 0,
+                            challenger_start_time = COALESCE(challenger_start_time, ?),
+                            start_time = COALESCE(start_time, ?)
+                        WHERE duel_id = ?
+                        """,
+                        [backdate_iso, backdate_iso, duel_id],
+                    )
+                    conn.commit()
+                    log.info(f"🔓 Guest auto-start for stuck duel {duel_id}")
+                finally:
+                    conn.close()
+                c_time  = 0
+                c_start = backdate_iso
+                status  = "ACTIVE"
+
+            if status != "ACTIVE":
                 continue
 
             tasks = []
