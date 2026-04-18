@@ -530,6 +530,13 @@ class GroupOperations:
 
         conn = get_db()
         try:
+            # Verify the group actually exists before joining
+            group = conn.execute(
+                "SELECT group_id FROM groups WHERE group_id = ?", [invite_code]
+            ).fetchone()
+            if not group:
+                return {"success": False, "error": "Invalid group code. No group found with that code."}
+
             conn.execute(
                 "UPDATE users SET group_id = ?, display_name = COALESCE(?, display_name), updated_at = ? WHERE username = ?",
                 [invite_code, display_name or username, now, norm_user],
