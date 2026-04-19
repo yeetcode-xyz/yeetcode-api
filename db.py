@@ -1009,13 +1009,11 @@ BLITZ_QUESTIONS = BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS + ADDITIONAL_QUESTIO
 
 
 def _seed_blitz_questions(conn):
-    """Insert blitz questions. Clears and reseeds in DEBUG_MODE for easy dev iteration."""
-    debug = os.getenv("DEBUG_MODE", "false").lower() == "true"
+    """Seed blitz questions. Re-seeds when the question list has grown."""
     count = conn.execute("SELECT COUNT(*) FROM blitz_questions").fetchone()[0]
-    if count > 0 and not debug:
+    if count >= len(BLITZ_QUESTIONS):
         return
-    if debug and count > 0:
-        conn.execute("DELETE FROM blitz_questions")
+    conn.execute("DELETE FROM blitz_questions")
     for q in BLITZ_QUESTIONS:
         conn.execute(
             """INSERT INTO blitz_questions (category, difficulty, question, code, options, answer, explanation)
