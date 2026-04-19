@@ -575,7 +575,437 @@ BLITZ_QUESTIONS_MCQ = [
     },
 ]
 
-BLITZ_QUESTIONS = BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS
+ADDITIONAL_DRAG_DROP = [
+    {
+        "category": "drag_drop", "difficulty": "easy",
+        "question": "Complete the count function (drag the variable names):",
+        "code": "def count(end):\n    for i in range([BLANK]):\n        print([BLANK])\n\ncount(5)",
+        "options": '["end", "i", "0", "count", "start", "n"]',
+        "answer": '["end", "i"]',
+        "explanation": "range(end) iterates up to end; print(i) prints each loop variable."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the sliding window max sum (drag variable names):",
+        "code": "def max_sum(arr, k):\n    window = sum(arr[:k])\n    best = [BLANK]\n    for i in range(k, len(arr)):\n        window += arr[i] - arr[i - k]\n        best = max([BLANK], window)\n    return best",
+        "options": '["window", "best", "0", "k", "arr", "i"]',
+        "answer": '["window", "best"]',
+        "explanation": "best starts as the initial window sum; max(best, window) updates the running maximum."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the reverse linked list (drag pointer names):",
+        "code": "def reverse(head):\n    prev = None\n    curr = [BLANK]\n    while curr:\n        nxt = curr.next\n        curr.next = [BLANK]\n        prev = curr\n        curr = nxt\n    return prev",
+        "options": '["head", "prev", "nxt", "None", "curr", "node"]',
+        "answer": '["head", "prev"]',
+        "explanation": "curr starts at head; each node's next is redirected to prev to reverse the list."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the two-pointer valid palindrome check:",
+        "code": "def is_palindrome(s):\n    left, right = 0, len(s) - 1\n    while [BLANK] < right:\n        if s[left] != s[[BLANK]]:\n            return False\n        left += 1\n        right -= 1\n    return True",
+        "options": '["left", "right", "0", "len(s)", "mid", "i"]',
+        "answer": '["left", "right"]',
+        "explanation": "Loop while left < right; compare s[left] vs s[right] to check palindrome."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the DFS with an explicit stack:",
+        "code": "def dfs(graph, start):\n    visited = set()\n    stack = [[BLANK]]\n    while stack:\n        node = stack.pop()\n        if node not in [BLANK]:\n            visited.add(node)\n            stack.extend(graph[node])\n    return visited",
+        "options": '["start", "visited", "graph", "node", "stack", "set()"]',
+        "answer": '["start", "visited"]',
+        "explanation": "Stack begins with start node; skip if node already in visited set."
+    },
+    {
+        "category": "drag_drop", "difficulty": "hard",
+        "question": "Complete the memoized Fibonacci:",
+        "code": "def fib(n, memo={}):\n    if n <= 1:\n        return n\n    if [BLANK] not in memo:\n        memo[[BLANK]] = fib(n-1, memo) + fib(n-2, memo)\n    return memo[n]",
+        "options": '["n", "memo", "0", "1", "result", "cache"]',
+        "answer": '["n", "n"]',
+        "explanation": "Both checks use n as the key: `if n not in memo` and `memo[n] = ...`."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the valid parentheses checker:",
+        "code": "def is_valid(s):\n    stack = []\n    pairs = {')': '(', '}': '{', ']': '['}\n    for [BLANK] in s:\n        if char in pairs:\n            if not stack or stack[-1] != pairs[[BLANK]]:\n                return False\n            stack.pop()\n        else:\n            stack.append(char)\n    return not stack",
+        "options": '["char", "stack", "pairs", "s", "c", "key"]',
+        "answer": '["char", "char"]',
+        "explanation": "Iterate with variable `char`; look up the expected opener via `pairs[char]`."
+    },
+    {
+        "category": "drag_drop", "difficulty": "hard",
+        "question": "Complete the fast/slow pointer cycle detection:",
+        "code": "def has_cycle(head):\n    slow = [BLANK]\n    fast = head\n    while fast and fast.next:\n        slow = slow.next\n        fast = fast.[BLANK].next\n        if slow == fast:\n            return True\n    return False",
+        "options": '["head", "next", "slow", "fast", "None", "prev"]',
+        "answer": '["head", "next"]',
+        "explanation": "slow starts at head; fast advances two steps via fast.next.next."
+    },
+    {
+        "category": "drag_drop", "difficulty": "medium",
+        "question": "Complete the prefix sum array:",
+        "code": "def prefix_sum(nums):\n    result = [0]\n    total = 0\n    for num in [BLANK]:\n        total += num\n        result.append([BLANK])\n    return result",
+        "options": '["nums", "total", "num", "result", "0", "sum"]',
+        "answer": '["nums", "total"]',
+        "explanation": "Iterate over nums; append the running total to build the prefix sum array."
+    },
+    {
+        "category": "drag_drop", "difficulty": "hard",
+        "question": "Complete the backtracking subsets generator:",
+        "code": "def subsets(nums):\n    result = []\n    def backtrack(start, [BLANK]):\n        result.append(list(path))\n        for i in range([BLANK], len(nums)):\n            path.append(nums[i])\n            backtrack(i + 1, path)\n            path.pop()\n    backtrack(0, [])\n    return result",
+        "options": '["path", "start", "result", "i", "nums", "0"]',
+        "answer": '["path", "start"]',
+        "explanation": "path accumulates the current subset; start prevents re-using earlier elements."
+    },
+]
+
+ADDITIONAL_QUESTIONS_MCQ = [
+    # ── Dry run (trace the code) ──────────────────────────────────────────────
+    {
+        "category": "dry_run", "difficulty": "easy",
+        "question": "What is the final value of x?",
+        "code": "x = 0\nfor i in range(5):\n    x += i\nprint(x)",
+        "options": '["10","15","4","5"]',
+        "answer": "10",
+        "explanation": "0+1+2+3+4 = 10."
+    },
+    {
+        "category": "dry_run", "difficulty": "easy",
+        "question": "What does this print?",
+        "code": "stack = []\nstack.append(1)\nstack.append(2)\nstack.append(3)\nprint(stack.pop())",
+        "options": '["1","2","3","[]"]',
+        "answer": "3",
+        "explanation": "pop() removes and returns the last element — stack (LIFO) returns 3."
+    },
+    {
+        "category": "dry_run", "difficulty": "easy",
+        "question": "What is the final value of result?",
+        "code": "result = 1\nfor i in range(1, 5):\n    result *= i\nprint(result)",
+        "options": '["24","120","10","4"]',
+        "answer": "24",
+        "explanation": "1*1*2*3*4 = 24 (4 factorial)."
+    },
+    {
+        "category": "dry_run", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "def f(x):\n    return x * 2\n\nresult = list(map(f, [1, 2, 3]))\nprint(result)",
+        "options": '["[2,4,6]","[1,2,3]","[1,4,9]","[2,3,4]"]',
+        "answer": "[2,4,6]",
+        "explanation": "map applies f to each element: 1*2=2, 2*2=4, 3*2=6."
+    },
+    {
+        "category": "dry_run", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "from collections import deque\nq = deque([1, 2, 3])\nq.append(4)\nq.popleft()\nprint(list(q))",
+        "options": '["[2,3,4]","[1,2,3]","[1,2,3,4]","[2,3]"]',
+        "answer": "[2,3,4]",
+        "explanation": "append(4) adds to right, popleft() removes 1 from left → [2,3,4]."
+    },
+    {
+        "category": "dry_run", "difficulty": "medium",
+        "question": "What is the final value of count?",
+        "code": "nums = [1, 2, 3, 4, 5]\ncount = 0\nfor n in nums:\n    if n % 2 == 0:\n        count += 1\nprint(count)",
+        "options": '["2","3","5","1"]',
+        "answer": "2",
+        "explanation": "Even numbers are 2 and 4 → count = 2."
+    },
+    {
+        "category": "dry_run", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "d = {}\nfor c in 'abba':\n    d[c] = d.get(c, 0) + 1\nprint(d['a'])",
+        "options": '["1","2","4","Error"]',
+        "answer": "2",
+        "explanation": "'a' appears twice in 'abba', so d['a'] = 2."
+    },
+    {
+        "category": "dry_run", "difficulty": "hard",
+        "question": "What does this print?",
+        "code": "def mystery(n):\n    if n == 0:\n        return 0\n    return n + mystery(n - 1)\n\nprint(mystery(4))",
+        "options": '["10","4","24","8"]',
+        "answer": "10",
+        "explanation": "4+3+2+1+0 = 10 (recursive sum)."
+    },
+    {
+        "category": "dry_run", "difficulty": "hard",
+        "question": "What does this print?",
+        "code": "res = []\nfor i in range(3):\n    for j in range(3):\n        if i == j:\n            res.append(i)\nprint(res)",
+        "options": '["[0,1,2]","[0,0,1,1,2,2]","[1,2,3]","[]"]',
+        "answer": "[0,1,2]",
+        "explanation": "i==j only on the diagonal: (0,0), (1,1), (2,2) → [0,1,2]."
+    },
+    {
+        "category": "dry_run", "difficulty": "hard",
+        "question": "What is the final value of dp[4]?",
+        "code": "dp = [0] * 5\ndp[0] = 1\nfor i in range(1, 5):\n    dp[i] = dp[i-1] * 2\nprint(dp[4])",
+        "options": '["8","16","4","32"]',
+        "answer": "16",
+        "explanation": "dp[0]=1, dp[1]=2, dp[2]=4, dp[3]=8, dp[4]=16."
+    },
+    # ── Technique (which algorithm/DS) ────────────────────────────────────────
+    {
+        "category": "technique", "difficulty": "easy",
+        "question": "Find the shortest path in an unweighted graph. Which algorithm?",
+        "code": None,
+        "options": '["DFS","BFS","Dijkstra","Bellman-Ford"]',
+        "answer": "BFS",
+        "explanation": "BFS explores nodes level by level, guaranteeing the shortest path in unweighted graphs."
+    },
+    {
+        "category": "technique", "difficulty": "easy",
+        "question": "Check if a string has balanced parentheses. Which data structure?",
+        "code": None,
+        "options": '["Queue","Stack","Heap","Hash Map"]',
+        "answer": "Stack",
+        "explanation": "Push opening brackets; pop and match on closing brackets. LIFO = stack."
+    },
+    {
+        "category": "technique", "difficulty": "easy",
+        "question": "Detect if a linked list has a cycle. Which technique?",
+        "code": None,
+        "options": '["Hash Set","Fast/Slow Pointers","BFS","Binary Search"]',
+        "answer": "Fast/Slow Pointers",
+        "explanation": "Floyd's cycle detection: fast pointer meets slow pointer inside the cycle."
+    },
+    {
+        "category": "technique", "difficulty": "medium",
+        "question": "Find the kth largest element in an array. Which is most efficient?",
+        "code": None,
+        "options": '["Sort descending","Min-heap of size k","Max-heap","Counting sort"]',
+        "answer": "Min-heap of size k",
+        "explanation": "Maintain a min-heap of k elements. O(n log k) vs O(n log n) for full sort."
+    },
+    {
+        "category": "technique", "difficulty": "medium",
+        "question": "Find two numbers in a sorted array that sum to a target. Best approach?",
+        "code": None,
+        "options": '["Nested loops O(n²)","Two pointers O(n)","Binary search O(n log n)","Hash map O(n)"]',
+        "answer": "Two pointers O(n)",
+        "explanation": "Move left pointer right if sum is too small, right pointer left if too large."
+    },
+    {
+        "category": "technique", "difficulty": "medium",
+        "question": "Count frequency of each character in a string. Best data structure?",
+        "code": None,
+        "options": '["Array","Linked List","Hash Map","Stack"]',
+        "answer": "Hash Map",
+        "explanation": "Hash maps give O(1) average insert and lookup for character → count mapping."
+    },
+    {
+        "category": "technique", "difficulty": "medium",
+        "question": "Find the minimum cost to reach every node from a source (weighted graph). Which algorithm?",
+        "code": None,
+        "options": '["BFS","DFS","Dijkstra","Merge Sort"]',
+        "answer": "Dijkstra",
+        "explanation": "Dijkstra's uses a min-heap to greedily pick the shortest unvisited node."
+    },
+    {
+        "category": "technique", "difficulty": "hard",
+        "question": "Find the minimum number of coins to make change. Which paradigm?",
+        "code": None,
+        "options": '["Greedy","Dynamic Programming","BFS","Divide and Conquer"]',
+        "answer": "Dynamic Programming",
+        "explanation": "Greedy fails for arbitrary coin sets. DP builds optimal solutions bottom-up."
+    },
+    {
+        "category": "technique", "difficulty": "hard",
+        "question": "Find the largest rectangle in a histogram. Which data structure?",
+        "code": None,
+        "options": '["Queue","Two Pointers","Monotonic Stack","Segment Tree"]',
+        "answer": "Monotonic Stack",
+        "explanation": "A monotonic stack tracks bars in increasing height, enabling O(n) area calculation."
+    },
+    {
+        "category": "technique", "difficulty": "hard",
+        "question": "Generate all valid combinations (e.g., subsets, permutations). Which technique?",
+        "code": None,
+        "options": '["BFS","Greedy","Backtracking","Memoization"]',
+        "answer": "Backtracking",
+        "explanation": "Backtracking explores all paths and prunes invalid branches, ideal for combinatorics."
+    },
+    # ── Extra complexity ──────────────────────────────────────────────────────
+    {
+        "category": "complexity", "difficulty": "easy",
+        "question": "What is the time complexity of this code?",
+        "code": "for i in range(n):\n    for j in range(n):\n        print(i, j)",
+        "options": '["O(n)","O(n²)","O(n log n)","O(2n)"]',
+        "answer": "O(n²)",
+        "explanation": "Two nested loops each running n times = n*n = O(n²)."
+    },
+    {
+        "category": "complexity", "difficulty": "medium",
+        "question": "What is the time complexity of this code?",
+        "code": "i = n\nwhile i > 1:\n    i = i // 2",
+        "options": '["O(n)","O(log n)","O(n log n)","O(1)"]',
+        "answer": "O(log n)",
+        "explanation": "i is halved each iteration, so the loop runs log₂(n) times."
+    },
+    {
+        "category": "complexity", "difficulty": "medium",
+        "question": "What is the space complexity of DFS on a graph with V nodes?",
+        "code": None,
+        "options": '["O(1)","O(V)","O(V²)","O(E)"]',
+        "answer": "O(V)",
+        "explanation": "The recursion stack and visited set each hold at most V nodes."
+    },
+    {
+        "category": "complexity", "difficulty": "medium",
+        "question": "What is the time complexity of inserting into a binary heap?",
+        "code": None,
+        "options": '["O(1)","O(log n)","O(n)","O(n log n)"]',
+        "answer": "O(log n)",
+        "explanation": "After insertion at the end, the element bubbles up at most log n levels."
+    },
+    {
+        "category": "complexity", "difficulty": "hard",
+        "question": "What is the time complexity?",
+        "code": "for i in range(n):\n    j = 1\n    while j < n:\n        j *= 2",
+        "options": '["O(n²)","O(n log n)","O(log n)","O(n)"]',
+        "answer": "O(n log n)",
+        "explanation": "Outer loop O(n), inner loop doubles j so it runs O(log n) times → O(n log n)."
+    },
+    {
+        "category": "complexity", "difficulty": "hard",
+        "question": "What is the space complexity of merge sort?",
+        "code": None,
+        "options": '["O(1)","O(log n)","O(n)","O(n log n)"]',
+        "answer": "O(n)",
+        "explanation": "Merge sort creates temporary arrays during merging totaling O(n) extra space."
+    },
+    # ── Extra concept ─────────────────────────────────────────────────────────
+    {
+        "category": "concept", "difficulty": "easy",
+        "question": "What is memoization?",
+        "code": None,
+        "options": '["Sorting results","Caching function results to avoid recomputation","Compressing data","Hashing inputs"]',
+        "answer": "Caching function results to avoid recomputation",
+        "explanation": "Memoization stores outputs of expensive function calls, returning cached results on repeat inputs."
+    },
+    {
+        "category": "concept", "difficulty": "easy",
+        "question": "What makes a graph a DAG?",
+        "code": None,
+        "options": '["It is undirected","It has no cycles and edges are directed","It has weighted edges","All nodes have equal degree"]',
+        "answer": "It has no cycles and edges are directed",
+        "explanation": "DAG = Directed Acyclic Graph. Directed edges + no cycles."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "What is the key difference between BFS and DFS?",
+        "code": None,
+        "options": '["BFS uses a stack, DFS uses a queue","BFS uses a queue and explores level by level; DFS uses a stack and goes deep first","BFS is only for trees","DFS cannot find shortest paths"]',
+        "answer": "BFS uses a queue and explores level by level; DFS uses a stack and goes deep first",
+        "explanation": "BFS (queue/FIFO) finds shortest paths in unweighted graphs; DFS (stack/LIFO) is better for path existence and cycle detection."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "How does a hash table handle collisions via chaining?",
+        "code": None,
+        "options": '["Overwrites the existing key","Finds the next empty slot","Each bucket holds a linked list of entries","Resizes the table"]',
+        "answer": "Each bucket holds a linked list of entries",
+        "explanation": "Separate chaining stores multiple key-value pairs at the same bucket using a linked list."
+    },
+    {
+        "category": "concept", "difficulty": "medium",
+        "question": "What is amortized O(1) time for dynamic array append?",
+        "code": None,
+        "options": '["Every append is O(1)","Most appends are O(1); occasional resize is O(n) but cost is spread over n operations","Append is O(log n) average","Append is O(n) worst case always"]',
+        "answer": "Most appends are O(1); occasional resize is O(n) but cost is spread over n operations",
+        "explanation": "Doubling strategy means resizes happen rarely. Total cost for n appends is O(n) → O(1) amortized."
+    },
+    {
+        "category": "concept", "difficulty": "hard",
+        "question": "What is a topological sort used for?",
+        "code": None,
+        "options": '["Sorting numbers","Ordering nodes in a DAG so all edges go forward","Finding shortest paths","Detecting cycles in undirected graphs"]',
+        "answer": "Ordering nodes in a DAG so all edges go forward",
+        "explanation": "Topological sort produces a linear ordering of a DAG's nodes — used in task scheduling, build systems, etc."
+    },
+    # ── Extra bug ─────────────────────────────────────────────────────────────
+    {
+        "category": "bug", "difficulty": "easy",
+        "question": "This should return the last element. What's wrong?",
+        "code": "def last(arr):\n    return arr[len(arr)]",
+        "options": '["Should use arr[-1] or arr[len(arr)-1]","arr should be a list","return is missing","len() is wrong"]',
+        "answer": "Should use arr[-1] or arr[len(arr)-1]",
+        "explanation": "arr[len(arr)] is one past the end — IndexError. Valid last index is len(arr)-1."
+    },
+    {
+        "category": "bug", "difficulty": "medium",
+        "question": "This should remove evens. What's the bug?",
+        "code": "nums = [1, 2, 3, 4, 5]\nfor n in nums:\n    if n % 2 == 0:\n        nums.remove(n)\nprint(nums)",
+        "options": '["remove() is wrong method","Modifying a list while iterating over it skips elements","Should use filter()","range() is missing"]',
+        "answer": "Modifying a list while iterating over it skips elements",
+        "explanation": "Removing items shifts indices mid-iteration. Build a new list or iterate a copy instead."
+    },
+    {
+        "category": "bug", "difficulty": "medium",
+        "question": "This function has a subtle bug. What is it?",
+        "code": "def add_item(item, lst=[]):\n    lst.append(item)\n    return lst",
+        "options": '["append is wrong","Default mutable argument is shared across all calls","item and lst are swapped","Missing return type"]',
+        "answer": "Default mutable argument is shared across all calls",
+        "explanation": "Default arguments are evaluated once. The same list is reused each call, causing unexpected accumulation."
+    },
+    {
+        "category": "bug", "difficulty": "hard",
+        "question": "Binary search returns wrong results. What's the bug?",
+        "code": "def binary_search(arr, t):\n    lo, hi = 0, len(arr)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == t: return mid\n        elif arr[mid] < t: lo = mid + 1\n        else: hi = mid - 1\n    return -1",
+        "options": '["lo should start at -1","hi should be len(arr)-1 to avoid index out of range","mid calculation is wrong","The while condition should be lo <= hi"]',
+        "answer": "hi should be len(arr)-1 to avoid index out of range",
+        "explanation": "hi = len(arr) can cause arr[mid] to be out of bounds when lo=0 and hi=len(arr)."
+    },
+    {
+        "category": "bug", "difficulty": "hard",
+        "question": "This recursive function always returns None. Why?",
+        "code": "def find(node, target):\n    if node is None:\n        return None\n    if node.val == target:\n        return node\n    find(node.left, target)\n    find(node.right, target)",
+        "options": '["Missing base case","Recursive calls are not returned","node.val comparison is wrong","Should use BFS instead"]',
+        "answer": "Recursive calls are not returned",
+        "explanation": "Without `return find(...)`, the result of recursive calls is discarded. Add `return` before each recursive call."
+    },
+    # ── Extra output ──────────────────────────────────────────────────────────
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "def make_adder(n):\n    return lambda x: x + n\n\nadd5 = make_adder(5)\nprint(add5(3))",
+        "options": '["5","3","8","Error"]',
+        "answer": "8",
+        "explanation": "make_adder(5) returns a closure capturing n=5. add5(3) returns 3+5=8."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "x = [1, 2, 3]\ny = x[:]\ny.append(4)\nprint(len(x), len(y))",
+        "options": '["3 3","4 4","3 4","4 3"]',
+        "answer": "3 4",
+        "explanation": "x[:] creates a shallow copy. Appending to y does not affect x."
+    },
+    {
+        "category": "output", "difficulty": "hard",
+        "question": "What does this print?",
+        "code": "fns = []\nfor i in range(3):\n    fns.append(lambda: i)\nprint([f() for f in fns])",
+        "options": '["[0,1,2]","[2,2,2]","[0,0,0]","Error"]',
+        "answer": "[2,2,2]",
+        "explanation": "Python closures capture the variable i by reference, not by value. After the loop i=2, so all lambdas return 2."
+    },
+    {
+        "category": "output", "difficulty": "medium",
+        "question": "What does this print?",
+        "code": "print(0.1 + 0.2 == 0.3)",
+        "options": '["True","False","Error","None"]',
+        "answer": "False",
+        "explanation": "Floating-point arithmetic is inexact. 0.1+0.2 = 0.30000000000000004 in IEEE 754."
+    },
+    {
+        "category": "output", "difficulty": "hard",
+        "question": "What does this print?",
+        "code": "class A:\n    x = 0\n\na = A()\nb = A()\na.x = 5\nprint(A.x, b.x)",
+        "options": '["5 5","0 0","0 5","5 0"]',
+        "answer": "0 0",
+        "explanation": "a.x = 5 creates an instance attribute on a only; the class attribute A.x and b.x remain 0."
+    },
+]
+
+ADDITIONAL_QUESTIONS = ADDITIONAL_DRAG_DROP + ADDITIONAL_QUESTIONS_MCQ
+
+BLITZ_QUESTIONS = BLITZ_QUESTIONS_MCQ + DRAG_DROP_QUESTIONS + ADDITIONAL_QUESTIONS
 
 
 def _seed_blitz_questions(conn):

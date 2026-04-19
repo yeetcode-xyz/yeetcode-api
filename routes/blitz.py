@@ -165,6 +165,27 @@ async def submit_blitz_score(
         conn.close()
 
 
+@router.get("/blitz/personal-best/{username}")
+async def get_personal_best(
+    username: str,
+    api_key: str = Depends(verify_api_key),
+):
+    """Return the personal best score for a user."""
+    conn = get_db()
+    try:
+        best = conn.execute(
+            """SELECT score, total, time_ms FROM blitz_scores
+               WHERE username = ?
+               ORDER BY score DESC, time_ms ASC LIMIT 1""",
+            [username.lower()],
+        ).fetchone()
+        return {"success": True, "data": dict(best) if best else None}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
 @router.get("/blitz/leaderboard")
 async def get_blitz_leaderboard(
     api_key: str = Depends(verify_api_key),
