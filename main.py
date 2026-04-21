@@ -38,6 +38,7 @@ from routes.duels import router as duels_router
 from routes.admin import router as admin_router
 from routes.push import router as push_router
 from routes.blitz import router as blitz_router
+from routes.ai import router as ai_router
 
 from aws import DuelOperations, VerificationOperations
 from logger import debug, info, warning, error
@@ -109,6 +110,7 @@ app.include_router(duels_router)
 app.include_router(admin_router)
 app.include_router(push_router)
 app.include_router(blitz_router)
+app.include_router(ai_router)
 
 if DEBUG_MODE:
     print("[DEBUG] Registered routes:")

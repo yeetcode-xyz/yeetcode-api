@@ -163,6 +163,22 @@ CREATE TABLE IF NOT EXISTS blitz_scores (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_blitz_scores_user ON blitz_scores(username);
+
+CREATE TABLE IF NOT EXISTS ai_duel_recaps (
+    problem_slug     TEXT PRIMARY KEY,
+    pattern_name     TEXT,
+    takeaway         TEXT,
+    similar_problems TEXT,
+    model_version    TEXT,
+    created_at       TEXT,
+    updated_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ai_problem_tags (
+    problem_slug TEXT PRIMARY KEY,
+    tags         TEXT,
+    fetched_at   TEXT
+);
 """
 
 

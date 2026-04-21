@@ -506,6 +506,33 @@ async def update_bounty_progress():
 # TASK 3: Generate Daily Problem
 # ========================================
 
+def fetch_problem_tags(slug: str) -> List[str]:
+    """Fetch LeetCode topicTags for a problem slug. Returns [] on failure."""
+    if not slug:
+        return []
+    query = """
+      query questionTopicTags($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+          topicTags { name }
+        }
+      }
+    """
+    try:
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": query, "variables": {"titleSlug": slug}},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            log.warning(f"LeetCode tag fetch failed ({response.status_code}) for {slug}")
+            return []
+        question = (response.json().get("data") or {}).get("question") or {}
+        return [t.get("name") for t in (question.get("topicTags") or []) if t.get("name")]
+    except Exception as e:
+        log.warning(f"LeetCode tag fetch error for {slug}: {e}")
+        return []
+
+
 def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
     """Fetch a random problem from LeetCode for the given difficulty."""
     difficulty = (difficulty or "EASY").upper()
