@@ -163,6 +163,42 @@ CREATE TABLE IF NOT EXISTS blitz_scores (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_blitz_scores_user ON blitz_scores(username);
+
+CREATE TABLE IF NOT EXISTS blind75_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS neetcode150_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS neetcode250_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS roadmap_progress (
+    username    TEXT NOT NULL,
+    list_name   TEXT NOT NULL,
+    slug        TEXT NOT NULL,
+    solved_at   TEXT,
+    PRIMARY KEY (username, list_name, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_roadmap_progress_user ON roadmap_progress(username);
 """
 
 
@@ -1024,6 +1060,29 @@ def _seed_blitz_questions(conn):
     conn.commit()
 
 
+def _seed_roadmap_table(conn, table_name: str, problems: list):
+    """Seed a roadmap problem table. Re-inserts if count doesn't match (handles updates)."""
+    count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+    if count == len(problems):
+        return
+    conn.execute(f"DELETE FROM {table_name}")
+    for p in problems:
+        conn.execute(
+            f"""INSERT INTO {table_name} (category, title, slug, difficulty, problem_number)
+               VALUES (?, ?, ?, ?, ?)""",
+            [p["category"], p["title"], p["slug"], p["difficulty"], p.get("problem_number")],
+        )
+    conn.commit()
+
+
+def _seed_roadmap_problems(conn):
+    """Seed Blind 75, NeetCode 150, and NeetCode 250 problem lists."""
+    from roadmap_data import BLIND75_PROBLEMS, NEETCODE150_PROBLEMS, NEETCODE250_PROBLEMS
+    _seed_roadmap_table(conn, "blind75_problems", BLIND75_PROBLEMS)
+    _seed_roadmap_table(conn, "neetcode150_problems", NEETCODE150_PROBLEMS)
+    _seed_roadmap_table(conn, "neetcode250_problems", NEETCODE250_PROBLEMS)
+
+
 def init_db():
     """Initialize database schema and run one-time data migrations on startup."""
     # Ensure parent directory exists
@@ -1037,4 +1096,5 @@ def init_db():
     _migrate_blob_integers(conn)
     _migrate_add_columns(conn)
     _seed_blitz_questions(conn)
+    _seed_roadmap_problems(conn)
     conn.close()

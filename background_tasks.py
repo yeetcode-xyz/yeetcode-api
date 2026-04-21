@@ -122,9 +122,9 @@ def fetch_user_tag_stats(username: str) -> Optional[Dict[str, int]]:
     return counts
 
 
-def fetch_user_weekly_count(username: str) -> int:
-    """Count unique problems solved by the user in the last 7 days.
-    Returns 0 on any error.
+def fetch_user_weekly_count(username: str) -> tuple:
+    """Fetch recent accepted submissions. Returns (weekly_count, {slug: timestamp_iso}).
+    Returns (0, {}) on any error.
     """
     query = """
       query recentAcSubmissions($username: String!, $limit: Int!) {
@@ -144,11 +144,12 @@ def fetch_user_weekly_count(username: str) -> int:
         data = response.json()
     except Exception as e:
         log.error(f"Error fetching weekly count for {username}: {e}")
-        return 0
+        return 0, {}
 
     submissions = (data.get("data") or {}).get("recentAcSubmissionList") or []
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=7)
-    seen: set = set()
+    weekly_seen: set = set()
+    all_solved: dict = {}  # slug -> ISO timestamp (earliest seen)
     for sub in submissions:
         ts = sub.get("timestamp")
         slug = sub.get("titleSlug")
@@ -158,9 +159,62 @@ def fetch_user_weekly_count(username: str) -> int:
             sub_dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
         except Exception:
             continue
+        if slug not in all_solved:
+            all_solved[slug] = sub_dt.isoformat()
         if sub_dt >= cutoff:
-            seen.add(slug)
-    return len(seen)
+            weekly_seen.add(slug)
+    return len(weekly_seen), all_solved
+
+
+# In-memory cache of all roadmap slugs, loaded once
+_roadmap_slug_cache: dict = {}  # list_name -> set of slugs
+
+
+def _load_roadmap_slugs():
+    """Load all roadmap problem slugs from DB into memory (called once)."""
+    if _roadmap_slug_cache:
+        return
+    conn = get_db()
+    try:
+        for list_name, table in [
+            ("blind75", "blind75_problems"),
+            ("neetcode150", "neetcode150_problems"),
+            ("neetcode250", "neetcode250_problems"),
+        ]:
+            rows = conn.execute(f"SELECT slug FROM {table}").fetchall()
+            _roadmap_slug_cache[list_name] = {r["slug"] for r in rows}
+    except Exception:
+        pass  # tables may not exist yet on first run
+    finally:
+        conn.close()
+
+
+def update_roadmap_progress(username: str, solved_slugs: dict):
+    """
+    Cross-reference a user's recently solved slugs against roadmap problem lists.
+    Inserts into roadmap_progress for any matches. No extra LeetCode API calls.
+    """
+    _load_roadmap_slugs()
+    if not _roadmap_slug_cache:
+        return
+
+    conn = get_db()
+    try:
+        for list_name, slug_set in _roadmap_slug_cache.items():
+            matched = slug_set & set(solved_slugs.keys())
+            for slug in matched:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO roadmap_progress (username, list_name, slug, solved_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    [username, list_name, slug, solved_slugs.get(slug)],
+                )
+        conn.commit()
+    except Exception as e:
+        log.error(f"update_roadmap_progress failed for {username}: {e}")
+    finally:
+        conn.close()
 
 
 def check_daily_completion(username: str) -> Optional[str]:
@@ -281,8 +335,12 @@ async def process_single_user(username: str) -> bool:
                 "tag_stats": json.dumps(tag_stats_result),
             })
 
-        weekly_count = await asyncio.to_thread(fetch_user_weekly_count, username)
+        weekly_count, solved_slugs = await asyncio.to_thread(fetch_user_weekly_count, username)
         UserOperations.update_user_data(username.lower(), {"weekly_solved": weekly_count})
+
+        # Update roadmap progress from the already-fetched submissions
+        if solved_slugs:
+            await asyncio.to_thread(update_roadmap_progress, username.lower(), solved_slugs)
 
         # Check daily completion
         today      = datetime.utcnow().strftime("%Y-%m-%d")
