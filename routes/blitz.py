@@ -147,9 +147,9 @@ async def submit_blitz_score(
 
         # Personal best
         best = conn.execute(
-            """SELECT score, time_ms FROM blitz_scores
+            """SELECT score, total, time_ms FROM blitz_scores
                WHERE username = ?
-               ORDER BY score DESC, time_ms ASC LIMIT 1""",
+               ORDER BY score DESC, CAST(score AS REAL) / total DESC, time_ms ASC LIMIT 1""",
             [username.lower()],
         ).fetchone()
 
@@ -159,6 +159,27 @@ async def submit_blitz_score(
                 "personal_best": dict(best) if best else None,
             },
         }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+@router.get("/blitz/personal-best/{username}")
+async def get_personal_best(
+    username: str,
+    api_key: str = Depends(verify_api_key),
+):
+    """Return the personal best score for a user."""
+    conn = get_db()
+    try:
+        best = conn.execute(
+            """SELECT score, total, time_ms FROM blitz_scores
+               WHERE username = ?
+               ORDER BY score DESC, CAST(score AS REAL) / total DESC, time_ms ASC LIMIT 1""",
+            [username.lower()],
+        ).fetchone()
+        return {"success": True, "data": dict(best) if best else None}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
@@ -181,7 +202,7 @@ async def get_blitz_leaderboard(
                FROM blitz_scores b
                LEFT JOIN users u ON u.username = b.username
                GROUP BY b.username
-               ORDER BY best_score DESC, best_time ASC
+               ORDER BY best_score DESC, CAST(best_score AS REAL) / b.total DESC, best_time ASC
                LIMIT 20""",
         ).fetchall()
         return {"success": True, "data": [dict(r) for r in rows]}
