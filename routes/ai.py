@@ -1,5 +1,5 @@
 """
-AI-assisted learning routes — recap + code review for completed duels.
+AI-assisted learning routes — recap + timing coach + blitz coach + code review.
 Powered by Gemini 2.5 Flash via google-genai, with SQLite caching.
 """
 
@@ -31,49 +31,74 @@ def _participant_check(duel: dict, username: str) -> bool:
     }
 
 
-def _user_context(duel: dict, username: str) -> str:
-    """Build a short 'You won/lost' string from duel timing."""
+def _fmt_time(ms: int | None) -> str:
+    if ms is None or ms < 0:
+        return "—"
+    s = int(ms / 1000)
+    return f"{s // 60}:{s % 60:02d}"
+
+
+def _user_timing(duel: dict, username: str) -> dict:
+    """Return my_time_ms, opponent_time_ms, outcome."""
     u = (username or "").lower()
     challenger = (duel.get("challenger") or "").lower()
     ch_time = duel.get("challenger_time") or -1
     cg_time = duel.get("challengee_time") or -1
     winner = (duel.get("winner") or "").lower()
 
-    def fmt(ms: int) -> str:
-        if ms is None or ms < 0:
-            return "—"
-        s = int(ms / 1000)
-        return f"{s // 60}:{s % 60:02d}"
-
     my_time = ch_time if u == challenger else cg_time
     their_time = cg_time if u == challenger else ch_time
 
-    if winner and winner == u:
-        if their_time and their_time > 0 and my_time and my_time > 0:
-            diff_s = max(0, int((their_time - my_time) / 1000))
-            return f"You won in {fmt(my_time)} — {diff_s}s ahead."
-        return f"You won in {fmt(my_time)}."
-    if winner and winner != u and my_time and my_time > 0 and their_time and their_time > 0:
-        diff_s = max(0, int((my_time - their_time) / 1000))
-        return f"You lost by {diff_s}s — your time {fmt(my_time)}."
-    if winner and winner != u:
-        return "You did not finish in time."
-    return f"Your time: {fmt(my_time)}."
+    if winner == u:
+        outcome = "won"
+    elif winner and winner != u:
+        outcome = "lost"
+    elif my_time < 0:
+        outcome = "dnf"
+    else:
+        outcome = "tied"
+    return {"my_time_ms": my_time, "opponent_time_ms": their_time, "outcome": outcome}
 
+
+def _user_context(duel: dict, username: str) -> str:
+    """Build a short 'You won/lost' string from duel timing."""
+    t = _user_timing(duel, username)
+    my_time = t["my_time_ms"]
+    their_time = t["opponent_time_ms"]
+    outcome = t["outcome"]
+
+    if outcome == "won":
+        if their_time > 0 and my_time > 0:
+            diff_s = max(0, int((their_time - my_time) / 1000))
+            return f"You won in {_fmt_time(my_time)} — {diff_s}s ahead."
+        return f"You won in {_fmt_time(my_time)}."
+    if outcome == "lost":
+        if my_time > 0 and their_time > 0:
+            diff_s = max(0, int((my_time - their_time) / 1000))
+            return f"You lost by {diff_s}s — your time {_fmt_time(my_time)}."
+        return "You did not finish in time."
+    return f"Your time: {_fmt_time(my_time)}."
+
+
+# ─── Cache helpers ─────────────────────────────────────────────────────────────
 
 def _load_cached_recap(slug: str) -> dict | None:
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT pattern_name, takeaway, similar_problems, model_version, updated_at "
+            "SELECT pattern_name, takeaway, solve_strategy, similar_problems, model_version, updated_at "
             "FROM ai_duel_recaps WHERE problem_slug = ?",
             [slug],
         ).fetchone()
         if not row:
             return None
+        # Reject legacy rows missing the new solve_strategy field — force regeneration.
+        if not row["solve_strategy"]:
+            return None
         return {
             "pattern_name": row["pattern_name"],
             "takeaway": json.loads(row["takeaway"]) if row["takeaway"] else None,
+            "solve_strategy": json.loads(row["solve_strategy"]),
             "similar_problems": json.loads(row["similar_problems"]) if row["similar_problems"] else [],
             "model_version": row["model_version"],
             "updated_at": row["updated_at"],
@@ -89,11 +114,12 @@ def _save_recap(slug: str, recap: dict):
         conn.execute(
             """
             INSERT INTO ai_duel_recaps
-                (problem_slug, pattern_name, takeaway, similar_problems, model_version, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (problem_slug, pattern_name, takeaway, solve_strategy, similar_problems, model_version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(problem_slug) DO UPDATE SET
                 pattern_name = excluded.pattern_name,
                 takeaway = excluded.takeaway,
+                solve_strategy = excluded.solve_strategy,
                 similar_problems = excluded.similar_problems,
                 model_version = excluded.model_version,
                 updated_at = excluded.updated_at
@@ -102,6 +128,7 @@ def _save_recap(slug: str, recap: dict):
                 slug,
                 recap.get("pattern_name"),
                 json.dumps(recap.get("takeaway") or {}),
+                json.dumps(recap.get("solve_strategy") or {}),
                 json.dumps(recap.get("similar_problems") or []),
                 MODEL_VERSION,
                 now,
@@ -147,12 +174,43 @@ def _save_tags(slug: str, tags: list[str]):
         conn.close()
 
 
+BUSY_MESSAGE = "Gemini is overloaded right now — please try again in a minute"
+
+
+def _get_or_generate_recap(slug: str, title: str, difficulty: str, username: str) -> dict | None:
+    """Cache-first recap lookup. Returns the recap dict or an error dict on failure."""
+    cached = _load_cached_recap(slug)
+    if cached:
+        return cached
+
+    if not gemini_service.allow_recap(username.lower()):
+        return {"__error__": "Rate limit exceeded — try again later"}
+
+    tags = _load_cached_tags(slug)
+    if tags is None:
+        tags = fetch_problem_tags(slug)
+        _save_tags(slug, tags)
+
+    try:
+        recap = gemini_service.generate_recap(slug, title, difficulty, tags)
+    except gemini_service.GeminiBusyError:
+        return {"__error__": BUSY_MESSAGE}
+    if not recap:
+        return None
+
+    _save_recap(slug, recap)
+    recap["model_version"] = MODEL_VERSION
+    return recap
+
+
+# ─── Endpoints ─────────────────────────────────────────────────────────────────
+
 @router.post("/ai/duel-recap")
 async def duel_recap_endpoint(
     request: dict,
     api_key: str = Depends(verify_api_key),
 ):
-    """Return a Gemini-generated learning recap for a completed duel."""
+    """Return a Gemini-generated learning recap + timing coach for a completed duel."""
     try:
         duel_id = request.get("duel_id")
         username = request.get("username")
@@ -175,30 +233,96 @@ async def duel_recap_endpoint(
         if not slug:
             return {"success": False, "error": "Duel has no problem assigned"}
 
-        # Cache hit → skip rate limit and Gemini call entirely
-        cached = _load_cached_recap(slug)
-        if cached:
-            cached["user_context"] = _user_context(duel, username)
-            cached["problem"] = {"slug": slug, "title": title, "difficulty": difficulty}
-            return {"success": True, "data": cached}
+        recap = _get_or_generate_recap(slug, title, difficulty, username)
+        if recap is None:
+            return {"success": False, "error": "AI recap generation failed — please retry"}
+        if isinstance(recap, dict) and recap.get("__error__"):
+            return {"success": False, "error": recap["__error__"]}
+
+        # Timing coach — personal, not cached. Failure here is non-fatal; the main
+        # recap is still valuable on its own.
+        timing = _user_timing(duel, username)
+        timing_coach = None
+        if timing["my_time_ms"] > 0 or timing["opponent_time_ms"] > 0:
+            if gemini_service.allow_recap(username.lower()):
+                try:
+                    timing_coach = gemini_service.generate_timing_coach(
+                        title=title,
+                        pattern_name=recap.get("pattern_name") or "",
+                        difficulty=difficulty,
+                        user_time_ms=timing["my_time_ms"],
+                        opponent_time_ms=timing["opponent_time_ms"],
+                        outcome=timing["outcome"],
+                    )
+                except gemini_service.GeminiBusyError:
+                    timing_coach = None
+
+        recap["user_context"] = _user_context(duel, username)
+        recap["problem"] = {"slug": slug, "title": title, "difficulty": difficulty}
+        recap["timing_coach"] = timing_coach
+        return {"success": True, "data": recap}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/ai/problem-recap")
+async def problem_recap_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Cache-first recap for any LeetCode problem (no duel context).
+
+    Used by daily problem, roadmap, etc. No participant check.
+    """
+    try:
+        slug = request.get("slug")
+        title = request.get("title") or slug
+        difficulty = request.get("difficulty") or "Medium"
+        username = request.get("username") or "anonymous"
+        if not slug:
+            return {"success": False, "error": "slug required"}
+
+        recap = _get_or_generate_recap(slug, title, difficulty, username)
+        if recap is None:
+            return {"success": False, "error": "AI recap generation failed — please retry"}
+        if isinstance(recap, dict) and recap.get("__error__"):
+            return {"success": False, "error": recap["__error__"]}
+
+        recap["problem"] = {"slug": slug, "title": title, "difficulty": difficulty}
+        return {"success": True, "data": recap}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/ai/blitz-coach")
+async def blitz_coach_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Given a Blitz run result, recommend the topic to drill + LeetCode problems."""
+    try:
+        username = request.get("username") or ""
+        score = int(request.get("score") or 0)
+        total = int(request.get("total") or 0)
+        wrong_topics = request.get("wrong_topics") or []
+        if not username:
+            return {"success": False, "error": "username required"}
+        if total <= 0:
+            return {"success": False, "error": "total must be > 0"}
 
         if not gemini_service.allow_recap(username.lower()):
             return {"success": False, "error": "Rate limit exceeded — try again later"}
 
-        tags = _load_cached_tags(slug)
-        if tags is None:
-            tags = fetch_problem_tags(slug)
-            _save_tags(slug, tags)
+        try:
+            coach = gemini_service.generate_blitz_coach(score, total, wrong_topics)
+        except gemini_service.GeminiBusyError:
+            return {"success": False, "error": BUSY_MESSAGE}
+        if not coach:
+            return {"success": False, "error": "AI coach generation failed — please retry"}
 
-        recap = gemini_service.generate_recap(slug, title, difficulty, tags)
-        if not recap:
-            return {"success": False, "error": "AI recap generation failed — please retry"}
-
-        _save_recap(slug, recap)
-        recap["user_context"] = _user_context(duel, username)
-        recap["problem"] = {"slug": slug, "title": title, "difficulty": difficulty}
-        recap["model_version"] = MODEL_VERSION
-        return {"success": True, "data": recap}
+        return {"success": True, "data": coach}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -239,7 +363,10 @@ async def code_review_endpoint(
         if not gemini_service.allow_review(username.lower()):
             return {"success": False, "error": "Rate limit exceeded — try again later"}
 
-        review = gemini_service.review_code(slug, title, code, language)
+        try:
+            review = gemini_service.review_code(slug, title, code, language)
+        except gemini_service.GeminiBusyError:
+            return {"success": False, "error": BUSY_MESSAGE}
         if not review:
             return {"success": False, "error": "AI code review failed — please retry"}
 

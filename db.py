@@ -249,6 +249,7 @@ def _migrate_add_columns(conn):
         ("blitz_challenges", "time_limit_ms",       "INTEGER NOT NULL DEFAULT 60000"),
         ("duels",           "guest_challenger",     "INTEGER DEFAULT 0"),
         ("duel_invites",    "is_guest",             "INTEGER DEFAULT 0"),
+        ("ai_duel_recaps",  "solve_strategy",       "TEXT"),
     ]
     for table, col, typedef in additions:
         try:
