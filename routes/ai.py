@@ -210,7 +210,7 @@ async def duel_recap_endpoint(
     request: dict,
     api_key: str = Depends(verify_api_key),
 ):
-    """Return a Gemini-generated learning recap + timing coach for a completed duel."""
+    """Return a Gemini-generated learning recap for a completed duel. Fast path — cached per problem_slug."""
     try:
         duel_id = request.get("duel_id")
         username = request.get("username")
@@ -239,28 +239,68 @@ async def duel_recap_endpoint(
         if isinstance(recap, dict) and recap.get("__error__"):
             return {"success": False, "error": recap["__error__"]}
 
-        # Timing coach — personal, not cached. Failure here is non-fatal; the main
-        # recap is still valuable on its own.
-        timing = _user_timing(duel, username)
-        timing_coach = None
-        if timing["my_time_ms"] > 0 or timing["opponent_time_ms"] > 0:
-            if gemini_service.allow_recap(username.lower()):
-                try:
-                    timing_coach = gemini_service.generate_timing_coach(
-                        title=title,
-                        pattern_name=recap.get("pattern_name") or "",
-                        difficulty=difficulty,
-                        user_time_ms=timing["my_time_ms"],
-                        opponent_time_ms=timing["opponent_time_ms"],
-                        outcome=timing["outcome"],
-                    )
-                except gemini_service.GeminiBusyError:
-                    timing_coach = None
-
         recap["user_context"] = _user_context(duel, username)
         recap["problem"] = {"slug": slug, "title": title, "difficulty": difficulty}
-        recap["timing_coach"] = timing_coach
         return {"success": True, "data": recap}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/ai/duel-timing-coach")
+async def duel_timing_coach_endpoint(
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Personal timing coach for a completed duel. Not cached — always calls Gemini."""
+    try:
+        duel_id = request.get("duel_id")
+        username = request.get("username")
+        if not duel_id or not username:
+            return {"success": False, "error": "duel_id and username required"}
+
+        duel_res = DuelOperations.get_duel_by_id(duel_id)
+        if not duel_res.get("success"):
+            return {"success": False, "error": duel_res.get("error") or "Duel not found"}
+        duel = duel_res["data"]
+
+        if not _participant_check(duel, username):
+            return {"success": False, "error": "Not a participant of this duel"}
+        if (duel.get("status") or "").upper() != "COMPLETED":
+            return {"success": False, "error": "Duel is not completed"}
+
+        slug = duel.get("problem_slug")
+        title = duel.get("problem_title") or slug
+        difficulty = duel.get("difficulty") or "Medium"
+        if not slug:
+            return {"success": False, "error": "Duel has no problem assigned"}
+
+        timing = _user_timing(duel, username)
+        if timing["my_time_ms"] <= 0 and timing["opponent_time_ms"] <= 0:
+            return {"success": True, "data": None}
+
+        if not gemini_service.allow_recap(username.lower()):
+            return {"success": False, "error": "Rate limit exceeded — try again later"}
+
+        cached = _load_cached_recap(slug)
+        pattern_name = (cached or {}).get("pattern_name") or ""
+
+        try:
+            coach = gemini_service.generate_timing_coach(
+                title=title,
+                pattern_name=pattern_name,
+                difficulty=difficulty,
+                user_time_ms=timing["my_time_ms"],
+                opponent_time_ms=timing["opponent_time_ms"],
+                outcome=timing["outcome"],
+            )
+        except gemini_service.GeminiBusyError:
+            return {"success": False, "error": BUSY_MESSAGE}
+
+        if not coach:
+            return {"success": False, "error": "AI timing coach failed — please retry"}
+
+        return {"success": True, "data": coach}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
