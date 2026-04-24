@@ -179,6 +179,42 @@ CREATE TABLE IF NOT EXISTS blitz_scores (
     created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_blitz_scores_user ON blitz_scores(username);
+
+CREATE TABLE IF NOT EXISTS blind75_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS neetcode150_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS neetcode250_problems (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    category        TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    difficulty      TEXT NOT NULL,
+    problem_number  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS roadmap_progress (
+    username    TEXT NOT NULL,
+    list_name   TEXT NOT NULL,
+    slug        TEXT NOT NULL,
+    solved_at   TEXT,
+    PRIMARY KEY (username, list_name, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_roadmap_progress_user ON roadmap_progress(username);
 """
 
 
