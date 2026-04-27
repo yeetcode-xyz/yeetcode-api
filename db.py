@@ -215,6 +215,43 @@ CREATE TABLE IF NOT EXISTS roadmap_progress (
     PRIMARY KEY (username, list_name, slug)
 );
 CREATE INDEX IF NOT EXISTS idx_roadmap_progress_user ON roadmap_progress(username);
+
+CREATE TABLE IF NOT EXISTS frontend_challenges (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    challenge_id    TEXT NOT NULL UNIQUE,
+    title           TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    type            TEXT NOT NULL,
+    difficulty      TEXT NOT NULL DEFAULT 'easy',
+    description     TEXT NOT NULL,
+    starter_html    TEXT NOT NULL DEFAULT '',
+    starter_css     TEXT NOT NULL DEFAULT '',
+    starter_js      TEXT NOT NULL DEFAULT '',
+    solution_html   TEXT NOT NULL DEFAULT '',
+    solution_css    TEXT NOT NULL DEFAULT '',
+    solution_js     TEXT NOT NULL DEFAULT '',
+    test_cases      TEXT NOT NULL DEFAULT '[]',
+    hints           TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_fc_category ON frontend_challenges(category);
+CREATE INDEX IF NOT EXISTS idx_fc_type ON frontend_challenges(type);
+
+CREATE TABLE IF NOT EXISTS frontend_submissions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT NOT NULL,
+    challenge_id    TEXT NOT NULL,
+    html            TEXT NOT NULL DEFAULT '',
+    css             TEXT NOT NULL DEFAULT '',
+    js              TEXT NOT NULL DEFAULT '',
+    tests_passed    INTEGER NOT NULL DEFAULT 0,
+    tests_total     INTEGER NOT NULL DEFAULT 0,
+    solved          INTEGER NOT NULL DEFAULT 0,
+    time_ms         INTEGER NOT NULL DEFAULT 0,
+    xp_awarded      INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fs_user ON frontend_submissions(username);
+CREATE INDEX IF NOT EXISTS idx_fs_challenge ON frontend_submissions(challenge_id);
 """
 
 
@@ -1100,6 +1137,29 @@ def _seed_roadmap_problems(conn):
     _seed_roadmap_table(conn, "neetcode250_problems", NEETCODE250_PROBLEMS)
 
 
+def _seed_frontend_challenges(conn):
+    """Seed frontend coding challenges. Re-seeds when the list has grown."""
+    from frontend_data import FRONTEND_CHALLENGES
+    count = conn.execute("SELECT COUNT(*) FROM frontend_challenges").fetchone()[0]
+    if count == len(FRONTEND_CHALLENGES):
+        return
+    conn.execute("DELETE FROM frontend_challenges")
+    for c in FRONTEND_CHALLENGES:
+        conn.execute(
+            """INSERT INTO frontend_challenges
+               (challenge_id, title, category, type, difficulty, description,
+                starter_html, starter_css, starter_js,
+                solution_html, solution_css, solution_js,
+                test_cases, hints)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            [c["challenge_id"], c["title"], c["category"], c["type"], c["difficulty"],
+             c["description"], c.get("starter_html", ""), c.get("starter_css", ""),
+             c.get("starter_js", ""), c.get("solution_html", ""), c.get("solution_css", ""),
+             c.get("solution_js", ""), c.get("test_cases", "[]"), c.get("hints", "[]")],
+        )
+    conn.commit()
+
+
 def init_db():
     """Initialize database schema and run one-time data migrations on startup."""
     # Ensure parent directory exists
@@ -1114,4 +1174,5 @@ def init_db():
     _migrate_add_columns(conn)
     _seed_blitz_questions(conn)
     _seed_roadmap_problems(conn)
+    _seed_frontend_challenges(conn)
     conn.close()
