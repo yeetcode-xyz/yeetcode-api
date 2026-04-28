@@ -10,24 +10,31 @@ DB_PATH = os.environ.get("SQLITE_PATH", "/data/yeetcode.db")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
-    username            TEXT PRIMARY KEY,
-    email               TEXT UNIQUE NOT NULL,
-    display_name        TEXT,
-    university          TEXT,
-    is_guest            INTEGER DEFAULT 0,
-    group_id            TEXT,
-    easy                INTEGER DEFAULT 0,
-    medium              INTEGER DEFAULT 0,
-    hard                INTEGER DEFAULT 0,
-    xp                  INTEGER DEFAULT 0,
-    streak              INTEGER DEFAULT 0,
-    last_completed_date TEXT,
-    today               INTEGER DEFAULT 0,
-    created_at          TEXT,
-    updated_at          TEXT,
-    leetcode_invalid    INTEGER DEFAULT 0,
-    tag_stats           TEXT DEFAULT NULL,
-    weekly_solved       INTEGER DEFAULT 0
+    username                          TEXT PRIMARY KEY,
+    email                             TEXT UNIQUE NOT NULL,
+    display_name                      TEXT,
+    university                        TEXT,
+    is_guest                          INTEGER DEFAULT 0,
+    group_id                          TEXT,
+    easy                              INTEGER DEFAULT 0,
+    medium                            INTEGER DEFAULT 0,
+    hard                              INTEGER DEFAULT 0,
+    xp                                INTEGER DEFAULT 0,
+    streak                            INTEGER DEFAULT 0,
+    last_completed_date               TEXT,
+    today                             INTEGER DEFAULT 0,
+    created_at                        TEXT,
+    updated_at                        TEXT,
+    leetcode_invalid                  INTEGER DEFAULT 0,
+    tag_stats                         TEXT DEFAULT NULL,
+    weekly_solved                     INTEGER DEFAULT 0,
+    tier                              TEXT DEFAULT 'free',
+    stripe_customer_id                TEXT,
+    stripe_subscription_id            TEXT,
+    subscription_status               TEXT,
+    subscription_current_period_end   INTEGER,
+    streak_freezes_remaining          INTEGER DEFAULT 1,
+    streak_freezes_period_key         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);
 CREATE INDEX IF NOT EXISTS idx_users_university ON users(university);
@@ -252,6 +259,71 @@ CREATE TABLE IF NOT EXISTS frontend_submissions (
 );
 CREATE INDEX IF NOT EXISTS idx_fs_user ON frontend_submissions(username);
 CREATE INDEX IF NOT EXISTS idx_fs_challenge ON frontend_submissions(challenge_id);
+
+-- Stripe webhook idempotency log.
+CREATE TABLE IF NOT EXISTS subscription_events (
+    event_id    TEXT PRIMARY KEY,
+    type        TEXT NOT NULL,
+    received_at TEXT NOT NULL
+);
+
+-- AI insight daily counter (free tier = 3/day, plus = unlimited).
+CREATE TABLE IF NOT EXISTS ai_usage (
+    username   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    count      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (username, date)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_user ON ai_usage(username);
+
+-- Frontend challenge monthly counter (free = 3/month, +3 unlock after solving 3, plus = unlimited).
+CREATE TABLE IF NOT EXISTS frontend_usage (
+    username       TEXT NOT NULL,
+    period_month   TEXT NOT NULL,
+    accessed_ids   TEXT NOT NULL DEFAULT '[]',
+    bonus_unlocked INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (username, period_month)
+);
+
+-- Streak freeze usage log (used dates within current period_month).
+CREATE TABLE IF NOT EXISTS streak_freeze_log (
+    username     TEXT NOT NULL,
+    period_month TEXT NOT NULL,
+    used_date    TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (username, used_date)
+);
+CREATE INDEX IF NOT EXISTS idx_freeze_log_user ON streak_freeze_log(username);
+
+-- Company-tagged problems (mocked schema; data populated later).
+CREATE TABLE IF NOT EXISTS companies (
+    company_id TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    slug       TEXT NOT NULL UNIQUE,
+    logo_url   TEXT,
+    sort_order INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS company_problems (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id    TEXT NOT NULL,
+    slug          TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    difficulty    TEXT NOT NULL,
+    leetcode_url  TEXT NOT NULL,
+    frequency     INTEGER DEFAULT 0,
+    UNIQUE (company_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_company_problems_company ON company_problems(company_id);
+
+-- Free tier: 1 company-tagged problem unlock per day. Plus: unlimited.
+CREATE TABLE IF NOT EXISTS company_problem_unlocks (
+    username   TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    company_id TEXT NOT NULL,
+    slug       TEXT NOT NULL,
+    PRIMARY KEY (username, date)
+);
 """
 
 
@@ -323,6 +395,13 @@ def _migrate_add_columns(conn):
         ("duels",           "guest_challenger",     "INTEGER DEFAULT 0"),
         ("duel_invites",    "is_guest",             "INTEGER DEFAULT 0"),
         ("ai_duel_recaps",  "solve_strategy",       "TEXT"),
+        ("users",           "tier",                          "TEXT DEFAULT 'free'"),
+        ("users",           "stripe_customer_id",            "TEXT"),
+        ("users",           "stripe_subscription_id",        "TEXT"),
+        ("users",           "subscription_status",           "TEXT"),
+        ("users",           "subscription_current_period_end","INTEGER"),
+        ("users",           "streak_freezes_remaining",      "INTEGER DEFAULT 1"),
+        ("users",           "streak_freezes_period_key",     "TEXT"),
     ]
     for table, col, typedef in additions:
         try:

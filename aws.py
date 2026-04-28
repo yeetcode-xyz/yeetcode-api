@@ -695,22 +695,34 @@ class DailyProblemOperations:
 
     @staticmethod
     def _calc_streak(conn, username: str) -> int:
-        """Count consecutive completed days ending at today (or yesterday)."""
+        """Count consecutive completed days ending at today (or yesterday).
+
+        Days protected by a streak freeze (streak_freeze_log) count as
+        completed for the purpose of preserving the chain.
+        """
         today = datetime.now(timezone.utc).date()
-        rows  = conn.execute(
-            "SELECT date FROM daily_completions WHERE username = ? ORDER BY date DESC",
-            [username],
+        rows = conn.execute(
+            "SELECT date FROM daily_completions WHERE username = ?", [username]
         ).fetchall()
         dates = {row["date"] for row in rows}
 
+        try:
+            freeze_rows = conn.execute(
+                "SELECT used_date FROM streak_freeze_log WHERE username = ?", [username]
+            ).fetchall()
+            for r in freeze_rows:
+                dates.add(r["used_date"])
+        except Exception:
+            pass  # table may be missing on a freshly-migrated DB
+
         streak = 0
-        check  = today
+        check = today
         if today.strftime("%Y-%m-%d") not in dates:
             check = today - timedelta(days=1)
 
         while check.strftime("%Y-%m-%d") in dates:
             streak += 1
-            check  -= timedelta(days=1)
+            check -= timedelta(days=1)
 
         return streak
 
@@ -765,7 +777,15 @@ class DailyProblemOperations:
             current_streak = user_row["streak"] if user_row else 0
             last_date      = user_row["last_completed_date"] if user_row else None
 
-            new_streak = current_streak + 1 if last_date == yesterday else 1
+            # A streak chains if yesterday was completed normally OR was
+            # protected by a streak freeze.
+            yesterday_frozen = conn.execute(
+                "SELECT 1 FROM streak_freeze_log WHERE username = ? AND used_date = ?",
+                [norm_user, yesterday],
+            ).fetchone()
+
+            chains = (last_date == yesterday) or bool(yesterday_frozen)
+            new_streak = current_streak + 1 if chains else 1
 
             conn.execute(
                 """

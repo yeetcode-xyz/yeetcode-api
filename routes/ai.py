@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends
 from auth import verify_api_key
 from aws import DuelOperations
 from db import get_db
-from services import gemini_service
+from services import gemini_service, limits
 from background_tasks import fetch_problem_tags
+
+DAILY_QUOTA_MSG = "Daily AI insight limit reached — upgrade to Plus for unlimited insights"
 
 router = APIRouter(tags=["AI"])
 
@@ -183,6 +185,9 @@ def _get_or_generate_recap(slug: str, title: str, difficulty: str, username: str
     if cached:
         return cached
 
+    allowed, _remaining = limits.check_ai_quota(username.lower())
+    if not allowed:
+        return {"__error__": DAILY_QUOTA_MSG}
     if not gemini_service.allow_recap(username.lower()):
         return {"__error__": "Rate limit exceeded — try again later"}
 
@@ -200,6 +205,7 @@ def _get_or_generate_recap(slug: str, title: str, difficulty: str, username: str
 
     _save_recap(slug, recap)
     recap["model_version"] = MODEL_VERSION
+    limits.record_ai_use(username.lower())
     return recap
 
 
@@ -279,6 +285,9 @@ async def duel_timing_coach_endpoint(
         if timing["my_time_ms"] <= 0 and timing["opponent_time_ms"] <= 0:
             return {"success": True, "data": None}
 
+        allowed, _remaining = limits.check_ai_quota(username.lower())
+        if not allowed:
+            return {"success": False, "error": DAILY_QUOTA_MSG}
         if not gemini_service.allow_recap(username.lower()):
             return {"success": False, "error": "Rate limit exceeded — try again later"}
 
@@ -300,6 +309,7 @@ async def duel_timing_coach_endpoint(
         if not coach:
             return {"success": False, "error": "AI timing coach failed — please retry"}
 
+        limits.record_ai_use(username.lower())
         return {"success": True, "data": coach}
 
     except Exception as e:
@@ -352,6 +362,9 @@ async def blitz_coach_endpoint(
         if total <= 0:
             return {"success": False, "error": "total must be > 0"}
 
+        allowed, _remaining = limits.check_ai_quota(username.lower())
+        if not allowed:
+            return {"success": False, "error": DAILY_QUOTA_MSG}
         if not gemini_service.allow_recap(username.lower()):
             return {"success": False, "error": "Rate limit exceeded — try again later"}
 
@@ -362,6 +375,7 @@ async def blitz_coach_endpoint(
         if not coach:
             return {"success": False, "error": "AI coach generation failed — please retry"}
 
+        limits.record_ai_use(username.lower())
         return {"success": True, "data": coach}
 
     except Exception as e:
@@ -400,6 +414,9 @@ async def code_review_endpoint(
         if not slug:
             return {"success": False, "error": "Duel has no problem assigned"}
 
+        allowed, _remaining = limits.check_ai_quota(username.lower())
+        if not allowed:
+            return {"success": False, "error": DAILY_QUOTA_MSG}
         if not gemini_service.allow_review(username.lower()):
             return {"success": False, "error": "Rate limit exceeded — try again later"}
 
@@ -410,6 +427,7 @@ async def code_review_endpoint(
         if not review:
             return {"success": False, "error": "AI code review failed — please retry"}
 
+        limits.record_ai_use(username.lower())
         return {"success": True, "data": review}
 
     except Exception as e:

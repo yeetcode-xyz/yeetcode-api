@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends
 from auth import verify_api_key
 from aws import UserOperations
 from db import get_db
+from services import limits
 
 router = APIRouter(tags=["Frontend Challenges"])
 
@@ -62,9 +63,15 @@ async def list_challenges(
 @router.get("/frontend/challenges/{challenge_id}")
 async def get_challenge(
     challenge_id: str,
+    username: str = "",
     api_key: str = Depends(verify_api_key),
 ):
-    """Get a single challenge with starter code and test cases."""
+    """Get a single challenge with starter code and test cases.
+
+    Free tier: 3 unique challenges / month, +3 after solving the base 3.
+    The username query param is required to enforce that gate; without it
+    we still return metadata but mark the challenge as locked for free users.
+    """
     conn = get_db()
     try:
         row = conn.execute(
@@ -74,8 +81,19 @@ async def get_challenge(
         if not row:
             return {"success": False, "error": "Challenge not found"}
 
+        # Tier gate — only enforced when a username is supplied. The website
+        # always sends username; clients without a session fall through and
+        # get the challenge (matches existing public listing behavior).
+        if username:
+            allowed, reason = limits.can_access_frontend(username, challenge_id)
+            if not allowed:
+                return {
+                    "success": False,
+                    "error": "Monthly free-tier frontend challenge limit reached. Upgrade to Plus for unlimited access, or solve your unlocked challenges to earn 3 bonus slots.",
+                    "code": "FRONTEND_MONTHLY_CAP",
+                }
+
         challenge = dict(row)
-        # Parse JSON fields
         challenge["test_cases"] = json.loads(challenge.get("test_cases") or "[]")
         challenge["hints"] = json.loads(challenge.get("hints") or "[]")
         return {"success": True, "data": challenge}
@@ -83,6 +101,18 @@ async def get_challenge(
         return {"success": False, "error": str(e)}
     finally:
         conn.close()
+
+
+@router.get("/frontend/quota/{username}")
+async def frontend_quota(
+    username: str,
+    api_key: str = Depends(verify_api_key),
+):
+    """Return monthly frontend access status for a user (tier-aware)."""
+    try:
+        return {"success": True, "data": limits.frontend_status(username)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/frontend/submit")
@@ -147,6 +177,14 @@ async def submit_solution(
             if is_first_solve and xp_awarded > 0:
                 UserOperations.award_xp(username, xp_awarded)
 
+            # Free-tier first-solve may unlock the +3 bonus quota for the month.
+            bonus_unlocked = False
+            if is_first_solve:
+                try:
+                    bonus_unlocked = limits.maybe_unlock_frontend_bonus(username)
+                except Exception:
+                    pass
+
             return {
                 "success": True,
                 "data": {
@@ -155,6 +193,7 @@ async def submit_solution(
                     "is_first_solve": is_first_solve,
                     "tests_passed": tests_passed,
                     "tests_total": tests_total,
+                    "frontend_bonus_unlocked": bonus_unlocked,
                 },
             }
         finally:

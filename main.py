@@ -41,6 +41,9 @@ from routes.blitz import router as blitz_router
 from routes.ai import router as ai_router
 from routes.roadmap import router as roadmap_router
 from routes.frontend import router as frontend_router
+from routes.billing import router as billing_router
+from routes.streak import router as streak_router
+from routes.companies import router as companies_router
 
 from aws import DuelOperations, VerificationOperations
 from logger import debug, info, warning, error
@@ -115,6 +118,9 @@ app.include_router(blitz_router)
 app.include_router(ai_router)
 app.include_router(roadmap_router)
 app.include_router(frontend_router)
+app.include_router(billing_router)
+app.include_router(streak_router)
+app.include_router(companies_router)
 
 if DEBUG_MODE:
     print("[DEBUG] Registered routes:")
