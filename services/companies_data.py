@@ -43,11 +43,14 @@ _SIMPLEICONS_LOGOS: Dict[str, str] = {
     "accenture": "accenture",
     "adobe": "adobe",
     "airbnb": "airbnb",
+    "american-express": "americanexpress",
     "apple": "apple",
     "atlassian": "atlassian",
+    "autodesk": "autodesk",
     "bloomberg": "bloomberg",
     "booking.com": "bookingdotcom",
     "bookingcom": "bookingdotcom",
+    "bytedance": "bytedance",
     "capgemini": "capgemini",
     "cisco": "cisco",
     "cloudflare": "cloudflare",
@@ -65,6 +68,7 @@ _SIMPLEICONS_LOGOS: Dict[str, str] = {
     "expedia": "expedia",
     "goldman-sachs": "goldmansachs",
     "google": "google",
+    "grammarly": "grammarly",
     "hcl": "hcl",
     "hubspot": "hubspot",
     "ibm": "ibm",
@@ -78,8 +82,11 @@ _SIMPLEICONS_LOGOS: Dict[str, str] = {
     "meta": "meta",
     "mongodb": "mongodb",
     "netflix": "netflix",
+    "nutanix": "nutanix",
     "nvidia": "nvidia",
+    "palantir-technologies": "palantir",
     "palo-alto-networks": "paloaltonetworks",
+    "paytm": "paytm",
     "paypal": "paypal",
     "pinterest": "pinterest",
     "qualcomm": "qualcomm",
@@ -96,6 +103,7 @@ _SIMPLEICONS_LOGOS: Dict[str, str] = {
     "snowflake": "snowflake",
     "spotify": "spotify",
     "stripe": "stripe",
+    "swiggy": "swiggy",
     "tcs": "tcs",
     "tiktok": "tiktok",
     "twitter": "x",
@@ -107,8 +115,10 @@ _SIMPLEICONS_LOGOS: Dict[str, str] = {
     "wipro": "wipro",
     "workday": "workday",
     "wix": "wix",
+    "yelp": "yelp",
     "zendesk": "zendesk",
     "zoho": "zoho",
+    "zomato": "zomato",
 }
 
 # Documented so future edits do not accidentally add these back to the allowlist.
@@ -138,27 +148,34 @@ _BRANDFETCH_DOMAINS: Dict[str, str] = {
     "anduril": "anduril.com",
     "arista-networks": "arista.com",
     "aws": "aws.amazon.com",
-    "bytedance": "bytedance.com",
     "capital-one": "capitalone.com",
     "citadel": "citadel.com",
     "coupang": "coupang.com",
     "de-shaw": "deshaw.com",
     "disney": "disney.com",
+    "docusign": "docusign.com",
     "epam-systems": "epam.com",
     "flipkart": "flipkart.com",
+    "hashedin": "hashedin.com",
+    "josh-technology": "joshtechnologygroup.com",
     "linkedin": "linkedin.com",
+    "mathworks": "mathworks.com",
+    "medianet": "media.net",
     "meesho": "meesho.com",
     "microsoft": "microsoft.com",
     "morgan-stanley": "morganstanley.com",
-    "nutanix": "nutanix.com",
     "oracle": "oracle.com",
     "phonepe": "phonepe.com",
+    "rubrik": "rubrik.com",
     "sprinklr": "sprinklr.com",
-    "swiggy": "swiggy.com",
     "tesla": "tesla.com",
+    "tinkoff": "tinkoff.ru",
+    "turing": "turing.com",
     "twilio": "twilio.com",
     "yahoo": "yahoo.com",
     "yandex": "yandex.com",
+    "zeta": "zeta.tech",
+    "zepto": "zeptonow.com",
 }
 
 
@@ -205,13 +222,14 @@ def _logo_url(company_id: str) -> Optional[str]:
 
 def list_companies(
     min_problems: int = 5,
-    limit: int = 60,
+    limit: int = 48,
+    offset: int = 0,
     search: Optional[str] = None,
-) -> List[Dict]:
-    """Return companies with problem counts, sorted by count desc."""
+) -> Dict:
+    """Return paginated companies with problem counts, sorted by count desc."""
     conn = _get_conn()
     try:
-        params = []
+        params: list = []
         where = ""
         normalized_search = (search or "").strip().lower()
         if normalized_search:
@@ -224,8 +242,22 @@ def list_companies(
                OR LOWER(REPLACE(company_id, ' ', '-')) LIKE ?
             """
             params.extend([like, spaced_like, dashed_like])
-        params.extend([min_problems, limit])
 
+        count_params = list(params) + [min_problems]
+        total = conn.execute(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT company_id
+                FROM company_problems
+                {where}
+                GROUP BY company_id
+                HAVING COUNT(*) >= ?
+            )
+            """,
+            count_params,
+        ).fetchone()[0]
+
+        params.extend([min_problems, limit, offset])
         rows = conn.execute(
             f"""
             SELECT company_id, COUNT(*) AS problem_count
@@ -234,11 +266,11 @@ def list_companies(
             GROUP BY company_id
             HAVING problem_count >= ?
             ORDER BY problem_count DESC, company_id ASC
-            LIMIT ?
+            LIMIT ? OFFSET ?
             """,
             params,
         ).fetchall()
-        return [
+        items = [
             {
                 "company_id": r["company_id"],
                 "slug": _slug_from_id(r["company_id"]),
@@ -248,6 +280,7 @@ def list_companies(
             }
             for r in rows
         ]
+        return {"items": items, "total": total, "has_more": offset + len(items) < total}
     finally:
         conn.close()
 

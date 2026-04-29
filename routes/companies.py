@@ -22,14 +22,13 @@ def _today() -> str:
 @router.get("/companies")
 async def list_companies(
     search: str = Query(default="", max_length=80),
+    offset: int = Query(default=0, ge=0),
     api_key: str = Depends(verify_api_key),
 ):
-    """Return companies with problem counts from the company dataset."""
+    """Return paginated companies with problem counts from the company dataset."""
     try:
-        return {
-            "success": True,
-            "data": companies_data.list_companies(search=search),
-        }
+        result = companies_data.list_companies(search=search, offset=offset)
+        return {"success": True, "data": result}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
