@@ -5,12 +5,12 @@ and streak freezes (monthly allowance).
 Free tier:
   - 3 AI insights / day
   - 3 unique frontend challenges / month, +3 bonus after solving the first 3
-  - 1 streak freeze / month
+  - 2 streak freezes / month
   - 1 company problem / day (handled separately in routes/companies.py)
 
 Plus tier:
   - Unlimited AI insights, frontend challenges, company problems
-  - 3 streak freezes / month
+  - 5 streak freezes / month
 """
 
 import json

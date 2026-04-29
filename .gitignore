@@ -74,3 +74,4 @@ dmypy.json
 # SQLite
 *.db
 *.db-*
+companies.db

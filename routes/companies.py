@@ -1,12 +1,12 @@
 """
-Company-tagged problems routes (mock data — see services/companies_data.py).
+Company-tagged problems routes.
 
 Free tier: 1 company-problem unlock per day (one slug, one company).
 Plus tier: unlimited.
 """
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from auth import verify_api_key
 from db import get_db
@@ -20,10 +20,16 @@ def _today() -> str:
 
 
 @router.get("/companies")
-async def list_companies(api_key: str = Depends(verify_api_key)):
-    """Return the list of companies with mock problem counts."""
+async def list_companies(
+    search: str = Query(default="", max_length=80),
+    api_key: str = Depends(verify_api_key),
+):
+    """Return companies with problem counts from the company dataset."""
     try:
-        return {"success": True, "data": companies_data.list_companies()}
+        return {
+            "success": True,
+            "data": companies_data.list_companies(search=search),
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 

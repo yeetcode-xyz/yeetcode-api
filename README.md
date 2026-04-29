@@ -59,6 +59,7 @@ API is at `http://localhost:6969`. Interactive docs at `/docs`.
 | `AWS_ACCESS_KEY_ID` | No | Only needed if using S3 backups |
 | `AWS_SECRET_ACCESS_KEY` | No | Only needed if using S3 backups |
 | `AWS_REGION` | No | AWS region (default: `us-east-1`) |
+| `BRANDFETCH_CLIENT_ID` | No | Enables Brandfetch logo URLs for companies that are unavailable in Simple Icons |
 
 > The old DynamoDB table name variables (`USERS_TABLE`, `DAILY_TABLE`, etc.) are only needed if running `migrate_from_dynamo.py`.
 
