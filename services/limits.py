@@ -226,7 +226,7 @@ def maybe_unlock_frontend_bonus(username: str) -> bool:
 
 # ─── Streak freezes — monthly allowance ───────────────────────────────────────
 
-FREEZE_ALLOWANCE = {"free": 1, "plus": 3}
+FREEZE_ALLOWANCE = {"free": 2, "plus": 5}
 
 
 def _ensure_freeze_period(conn, username: str, tier: str) -> Dict:
