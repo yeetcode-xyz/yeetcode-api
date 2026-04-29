@@ -324,6 +324,16 @@ CREATE TABLE IF NOT EXISTS company_problem_unlocks (
     slug       TEXT NOT NULL,
     PRIMARY KEY (username, date)
 );
+
+-- Promo code redemptions. Tracks who redeemed which code and when.
+CREATE TABLE IF NOT EXISTS promo_redemptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    username    TEXT NOT NULL,
+    code        TEXT NOT NULL,
+    redeemed_at TEXT NOT NULL,
+    UNIQUE (username, code)
+);
+CREATE INDEX IF NOT EXISTS idx_promo_code ON promo_redemptions(code);
 """
 
 
