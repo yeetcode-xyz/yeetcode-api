@@ -46,6 +46,8 @@ _INT_FIELDS = {
     "is_wager", "wager_amount", "challenger_wager", "challengee_wager",
     "challenger_time", "challengee_time", "expires_at",
     "count", "expiry_date", "start_date", "xp_reward",
+    "weekly_solved", "streak_freezes_remaining",
+    "guest_challenger", "solved", "tests_passed", "tests_total", "time_ms", "xp_awarded",
 }
 
 def _row_to_dict(row) -> Optional[Dict]:
@@ -53,10 +55,11 @@ def _row_to_dict(row) -> Optional[Dict]:
     if row is None:
         return None
     d = dict(row)
-    # Coerce any integer fields stored as BLOB bytes from the DynamoDB migration
-    for field in _INT_FIELDS:
-        if field in d and isinstance(d[field], (bytes, bytearray)):
-            d[field] = _safe_int(d[field])
+    # Coerce ANY bytes/bytearray value to int — covers known _INT_FIELDS
+    # plus any new columns that might have BLOB-stored integers
+    for key, val in d.items():
+        if isinstance(val, (bytes, bytearray)):
+            d[key] = _safe_int(val)
     easy   = _safe_int(d.get("easy"))
     medium = _safe_int(d.get("medium"))
     hard   = _safe_int(d.get("hard"))
