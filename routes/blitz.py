@@ -158,32 +158,36 @@ async def get_challenge_results(
         c_total   = inv.get("challenger_total", 0) or 0
         c_time_ms = inv.get("challenger_time_ms", 0) or 0
 
-        # Opponent = anyone who submitted a score for this token that isn't the challenger
-        opp_row = conn.execute(
-            """SELECT username, score, total, time_ms FROM blitz_scores
-               WHERE challenge_token = ? AND username != ?
-               ORDER BY score DESC, CAST(score AS REAL) / CASE WHEN total > 0 THEN total ELSE 1 END DESC, time_ms ASC
-               LIMIT 1""",
-            [token, challenger_name],
-        ).fetchone()
+        # Read opponent score directly from blitz_challenges columns (new /submit flow)
+        o_name  = inv.get("opponent")
+        o_score = inv.get("opponent_score")
+        o_total = inv.get("opponent_total")
+        o_time  = inv.get("opponent_time_ms")
 
-        opponent = dict(opp_row) if opp_row else None
+        opponent = None
+        if o_name and o_total:
+            opponent = {
+                "username": o_name,
+                "score":    o_score or 0,
+                "total":    o_total or 0,
+                "time_ms":  o_time  or 0,
+            }
 
-        # Determine winner if both have played
-        winner = None
-        if opponent and c_total > 0:
-            o_score   = opponent["score"]
-            o_total   = opponent["total"]
-            o_time_ms = opponent["time_ms"]
-            if c_score != o_score:
-                winner = challenger_name if c_score > o_score else opponent["username"]
+        # Winner is set by _finish_challenge when both sides submit; read it directly
+        winner = inv.get("winner")
+
+        # Recompute if somehow not stored yet but both have played
+        if not winner and opponent and c_total > 0:
+            o_s, o_t, o_tm = opponent["score"], opponent["total"], opponent["time_ms"]
+            if c_score != o_s:
+                winner = challenger_name if c_score > o_s else o_name
             else:
                 c_acc = c_score / c_total if c_total else 0
-                o_acc = o_score / o_total if o_total else 0
+                o_acc = o_s / o_t if o_t else 0
                 if c_acc != o_acc:
-                    winner = challenger_name if c_acc > o_acc else opponent["username"]
+                    winner = challenger_name if c_acc > o_acc else o_name
                 else:
-                    winner = challenger_name if c_time_ms <= o_time_ms else opponent["username"]
+                    winner = challenger_name if c_time_ms <= o_tm else o_name
 
         return {
             "success": True,
