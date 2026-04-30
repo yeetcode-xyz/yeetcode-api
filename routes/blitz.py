@@ -118,11 +118,15 @@ async def get_blitz_challenge(
             "success": True,
             "data": {
                 "token": token,
-                "challenger": inv["challenger"],
-                "time_limit_ms": inv.get("time_limit_ms", 60000),
-                "challenger_score":    inv.get("challenger_score", 0),
-                "challenger_total":    inv.get("challenger_total", 0),
-                "challenger_time_ms":  inv.get("challenger_time_ms", 0),
+                "challenger":         inv["challenger"],
+                "opponent":           inv.get("opponent"),
+                "status":             inv.get("status", "pending"),
+                "time_limit_ms":      inv.get("time_limit_ms", 60000),
+                "challenger_score":   inv.get("challenger_score", 0),
+                "challenger_total":   inv.get("challenger_total", 0),
+                "challenger_time_ms": inv.get("challenger_time_ms", 0),
+                "game_started_at":    inv.get("game_started_at"),
+                "challenger_online":  _challenger_online(inv),
                 "questions": questions,
             },
         }
@@ -285,6 +289,115 @@ async def get_blitz_leaderboard(
                LIMIT 20""",
         ).fetchall()
         return {"success": True, "data": [dict(r) for r in rows]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+CHALLENGER_ONLINE_SECONDS = 30  # heartbeat timeout
+
+
+def _challenger_online(inv: dict) -> bool:
+    """True if challenger pinged within the last CHALLENGER_ONLINE_SECONDS."""
+    last = inv.get("challenger_last_seen")
+    if not last:
+        return False
+    try:
+        from datetime import datetime, timezone
+        delta = datetime.now(timezone.utc) - datetime.fromisoformat(last)
+        return delta.total_seconds() < CHALLENGER_ONLINE_SECONDS
+    except Exception:
+        return False
+
+
+@router.post("/blitz/challenge/{token}/heartbeat")
+async def challenge_heartbeat(
+    token: str,
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Challenger pings to show they're still in the waiting lobby."""
+    username = request.get("username", "").lower()
+    conn = get_db()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """UPDATE blitz_challenges SET challenger_last_seen = ?
+               WHERE token = ? AND LOWER(challenger) = ? AND status = 'pending'""",
+            [now, token, username],
+        )
+        conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+@router.post("/blitz/challenge/{token}/cancel")
+async def cancel_challenge(
+    token: str,
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Challenger cancels a pending challenge."""
+    username = request.get("username", "").lower()
+    conn = get_db()
+    try:
+        conn.execute(
+            """UPDATE blitz_challenges SET status = 'cancelled'
+               WHERE token = ? AND LOWER(challenger) = ? AND status = 'pending'""",
+            [token, username],
+        )
+        conn.commit()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+@router.post("/blitz/challenge/{token}/accept")
+async def accept_challenge(
+    token: str,
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Opponent accepts — sets game_started_at so both sides start simultaneously."""
+    username = request.get("username", "").lower()
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM blitz_challenges WHERE token = ?", [token]
+        ).fetchone()
+        if not row:
+            return {"success": False, "error": "Challenge not found"}
+        inv = dict(row)
+
+        if inv.get("status") != "pending":
+            return {"success": False, "error": f"Challenge is {inv.get('status')}"}
+        if inv["challenger"].lower() == username:
+            return {"success": False, "error": "You cannot accept your own challenge"}
+        if inv.get("opponent") and inv["opponent"].lower() != username:
+            return {"success": False, "error": "This challenge is not for you"}
+        if not _challenger_online(inv):
+            # Challenger left — cancel automatically
+            conn.execute(
+                "UPDATE blitz_challenges SET status = 'cancelled' WHERE token = ?", [token]
+            )
+            conn.commit()
+            return {"success": False, "error": "Challenger has left the lobby"}
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """UPDATE blitz_challenges
+               SET status = 'in_progress', game_started_at = ?, opponent = ?
+               WHERE token = ?""",
+            [now, username, token],
+        )
+        conn.commit()
+        return {"success": True, "data": {"game_started_at": now}}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:
