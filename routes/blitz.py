@@ -64,11 +64,13 @@ async def create_blitz_challenge(
         conn.execute(
             """INSERT INTO blitz_challenges
                (token, challenger, question_ids, time_limit_ms, created_at, expires_at,
-                challenger_score, challenger_total, challenger_time_ms, opponent, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                challenger_score, challenger_total, challenger_time_ms, opponent, status,
+                challenger_last_seen)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [token, challenger.lower(), json.dumps(selected), time_limit_ms, now_iso, expires_at,
              challenger_score, challenger_total, challenger_time_ms,
-             opponent.lower() if opponent else None, "pending"],
+             opponent.lower() if opponent else None, "pending",
+             now_iso],  # mark challenger as online immediately
         )
         conn.commit()
         return {
@@ -532,10 +534,10 @@ async def get_pending_challenges(
     try:
         me = username.lower()
         rows = conn.execute(
-            """SELECT token, challenger, time_limit_ms, challenger_score, challenger_total, created_at
+            """SELECT token, challenger, time_limit_ms, challenger_score, challenger_total,
+                      created_at, challenger_last_seen
                FROM blitz_challenges
                WHERE LOWER(opponent) = ? AND status = 'pending'
-                 AND challenger_total > 0
                ORDER BY created_at DESC
                LIMIT 20""",
             [me],
@@ -543,7 +545,9 @@ async def get_pending_challenges(
         challenges = []
         for r in rows:
             row = dict(r)
-            # Enrich with challenger display name
+            # Only include challenges where challenger is still online
+            if not _challenger_online(row):
+                continue
             u = conn.execute(
                 "SELECT display_name FROM users WHERE LOWER(username) = ?",
                 [row["challenger"].lower()],
