@@ -14,6 +14,7 @@ import stripe
 
 from db import get_db
 from logger import info, warning, error
+from services.resend_service import send_subscription_welcome_email, send_cancellation_email
 
 
 def _api_key() -> str:
@@ -225,6 +226,11 @@ def handle_event(event: dict) -> Dict:
             target_user = username or _username_for_customer(customer_id or "")
             if target_user:
                 _apply_subscription(target_user, sub)
+                user_row = _get_user_row(target_user)
+                send_subscription_welcome_email(
+                    email=user_row.get("email") if user_row else None,
+                    display_name=user_row.get("display_name") if user_row else None,
+                )
             else:
                 warning(f"[stripe] checkout.session.completed: no user for customer={customer_id}")
 
@@ -240,6 +246,12 @@ def handle_event(event: dict) -> Dict:
             warning(f"[stripe] {type_}: no user mapping for customer={customer_id}")
         else:
             _apply_subscription(username, obj)
+            if type_ == "customer.subscription.deleted":
+                user_row = _get_user_row(username)
+                send_cancellation_email(
+                    email=user_row.get("email") if user_row else None,
+                    display_name=user_row.get("display_name") if user_row else None,
+                )
 
     elif type_ == "invoice.paid":
         customer_id = obj.get("customer")
