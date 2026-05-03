@@ -779,6 +779,11 @@ async def poll_active_duels():
 
         for row in rows:
             duel = dict(row)
+            # Coerce BLOB-stored ints (legacy DynamoDB-migrated rows) to real ints
+            for f in ("challenger_time", "challengee_time", "guest_challenger"):
+                v = duel.get(f)
+                if isinstance(v, (bytes, bytearray)):
+                    duel[f] = int.from_bytes(v, "little")
             duel_id      = duel.get("duel_id")
             status       = duel.get("status")
             problem_slug = duel.get("problem_slug")
