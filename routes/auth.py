@@ -41,7 +41,7 @@ async def send_otp(
     
     try:
         # Send email with the code provided by frontend
-        result = send_email_otp(email, request.code)
+        result = send_email_otp(email, request.code, site=request.site)
         
         if DEBUG_MODE:
             print(f"[DEBUG] OTP sent successfully to {email}")

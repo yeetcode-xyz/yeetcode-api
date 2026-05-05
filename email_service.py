@@ -25,7 +25,7 @@ def _post_discord(webhook_url: str, payload: dict):
             print(f"[ERROR] Discord webhook failed: {e}")
 
 
-def send_email_otp(email: str, code: str) -> Dict:
+def send_email_otp(email: str, code: str, site: str | None = None) -> Dict:
     """Send OTP via Discord webhook."""
     if DEBUG_MODE:
         print(f"[DEBUG] OTP for {email}: {code}")
@@ -43,6 +43,7 @@ def send_email_otp(email: str, code: str) -> Dict:
                 "fields": [
                     {"name": "Email", "value": email, "inline": True},
                     {"name": "Code", "value": f"**`{code}`**", "inline": True},
+                    {"name": "Site", "value": site or "unknown", "inline": True},
                 ],
                 "footer": {"text": "Expires in 10 minutes"},
                 "timestamp": None,

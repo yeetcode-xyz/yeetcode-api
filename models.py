@@ -9,6 +9,7 @@ from typing import Optional, Dict, List
 class EmailOTPRequest(BaseModel):
     email: EmailStr
     code: str
+    site: Optional[str] = None
 
 
 class EmailOTPResponse(BaseModel):
