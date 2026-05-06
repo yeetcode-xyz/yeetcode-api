@@ -1141,6 +1141,28 @@ class DuelOperations:
             conn.close()
 
     @staticmethod
+    def get_attempted_slugs(usernames: list) -> set:
+        """Return all problem slugs that any of the given users have appeared in as a duel participant."""
+        if not usernames:
+            return set()
+        norm = [u.lower() for u in usernames]
+        placeholders = ",".join("?" * len(norm))
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT problem_slug FROM duels "
+                f"WHERE (challenger IN ({placeholders}) OR challengee IN ({placeholders})) "
+                f"AND problem_slug IS NOT NULL AND problem_slug != ''",
+                norm + norm,
+            ).fetchall()
+            return {r[0] for r in rows}
+        except Exception as e:
+            error(f"get_attempted_slugs failed: {e}")
+            return set()
+        finally:
+            conn.close()
+
+    @staticmethod
     def get_all_duels() -> Dict:
         conn = get_db()
         try:

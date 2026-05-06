@@ -9,6 +9,12 @@ from models import DuelRequest
 from auth import verify_api_key
 from aws import DuelOperations, UserOperations
 
+async def _pick_problem(difficulty: str, *usernames: str) -> dict | None:
+    """Pick a random problem that none of the given users have seen in a duel."""
+    exclude = await asyncio.to_thread(DuelOperations.get_attempted_slugs, list(usernames))
+    from background_tasks import fetch_random_problem
+    return await asyncio.to_thread(fetch_random_problem, difficulty, exclude)
+
 router = APIRouter(tags=["Duels"])
 
 
@@ -56,8 +62,7 @@ async def create_duel_endpoint(
 
         # Auto-assign a random problem if the frontend didn't specify one
         if not problem_slug:
-            from background_tasks import fetch_random_problem
-            problem = await asyncio.to_thread(fetch_random_problem)
+            problem = await _pick_problem(difficulty, request.username, request.opponent)
             if not problem:
                 return {"success": False, "error": "Could not find a suitable problem — try again"}
             problem_slug   = problem["titleSlug"]
@@ -249,8 +254,7 @@ async def create_open_challenge_endpoint(
         difficulty     = request.difficulty
 
         if not problem_slug:
-            from background_tasks import fetch_random_problem
-            problem = await asyncio.to_thread(fetch_random_problem)
+            problem = await _pick_problem(difficulty, request.username)
             if not problem:
                 return {"success": False, "error": "Could not find a suitable problem — try again"}
             problem_slug   = problem["titleSlug"]

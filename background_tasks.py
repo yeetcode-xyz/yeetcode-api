@@ -591,9 +591,10 @@ def fetch_problem_tags(slug: str) -> List[str]:
         return []
 
 
-def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
+def fetch_random_problem(difficulty: str = "EASY", exclude_slugs: set = None) -> Optional[Dict]:
     """Fetch a random problem from LeetCode for the given difficulty."""
     difficulty = (difficulty or "EASY").upper()
+    exclude_slugs = exclude_slugs or set()
     query = """
     query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
       problemsetQuestionList: questionList(
@@ -617,7 +618,7 @@ def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
     }
     """
 
-    for attempt in range(5):
+    for attempt in range(10):
         skip = random.randint(0, 700)
         log.info(f"🎲 Attempt {attempt + 1}: skip index {skip}")
 
@@ -645,9 +646,13 @@ def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
                 continue
 
             problem = questions[0]
-            if not problem.get("paidOnly"):
-                return problem
-            log.info(f"💸 Skipped paid-only: {problem['title']}")
+            if problem.get("paidOnly"):
+                log.info(f"💸 Skipped paid-only: {problem['title']}")
+                continue
+            if problem["titleSlug"] in exclude_slugs:
+                log.info(f"⏭️ Skipped already-attempted: {problem['titleSlug']}")
+                continue
+            return problem
 
         except Exception as e:
             log.error(f"Error fetching problem: {e}")
