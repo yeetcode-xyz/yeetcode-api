@@ -78,7 +78,7 @@ async def create_duel_endpoint(
             problem_number,
             difficulty,
             request.is_wager or False,
-            request.wager_amount
+            request.wager_amount,
         )
         return result
     except Exception as e:
@@ -264,7 +264,7 @@ async def create_open_challenge_endpoint(
 
         return DuelOperations.create_open_challenge(
             request.username, problem_slug, problem_title,
-            problem_number, difficulty, request.is_wager or False, request.wager_amount
+            problem_number, difficulty, request.is_wager or False, request.wager_amount,
         )
     except Exception as e:
         return {"success": False, "error": str(e)}

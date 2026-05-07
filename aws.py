@@ -329,20 +329,15 @@ class UserOperations:
         conn = get_db()
         try:
             chall = conn.execute(
-                "UPDATE duels SET challenger = ? "
-                "WHERE LOWER(challenger) = ? AND guest_challenger = 1",
+                "UPDATE duels SET challenger = ?, guest_challenger = 0 "
+                "WHERE LOWER(challenger) = ?",
                 [nu, lu],
             ).rowcount
             chalee = conn.execute(
                 "UPDATE duels SET challengee = ? "
-                "WHERE LOWER(challengee) = ? AND guest_challenger = 1",
+                "WHERE LOWER(challengee) = ?",
                 [nu, lu],
             ).rowcount
-            # Once merged, they're a real user — clear the guest flag on their rows
-            conn.execute(
-                "UPDATE duels SET guest_challenger = 0 WHERE challenger = ?",
-                [nu],
-            )
             conn.commit()
             return {"success": True, "merged_challenger": chall, "merged_challengee": chalee}
         except Exception as e:
@@ -1601,7 +1596,7 @@ class DuelOperations:
         """Create a duel open to any group member (challengee='OPEN')."""
         return DuelOperations.create_duel(
             challenger, "OPEN", problem_slug, problem_title,
-            problem_number, difficulty, is_wager, wager_amount
+            problem_number, difficulty, is_wager, wager_amount,
         )
 
     @staticmethod
