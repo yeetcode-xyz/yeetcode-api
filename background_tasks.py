@@ -591,10 +591,132 @@ def fetch_problem_tags(slug: str) -> List[str]:
         return []
 
 
+# In-memory pool of pre-fetched problems keyed by difficulty.
+# Seeded on startup and replenished when it runs low.
+_PROBLEM_POOL: dict[str, list[dict]] = {"EASY": [], "MEDIUM": [], "HARD": []}
+_POOL_LOCK = asyncio.Lock()
+_POOL_MIN = 5    # replenish when a difficulty drops below this
+_POOL_TARGET = 30  # fill each difficulty up to this count
+
+
+def _fetch_problems_batch(difficulty: str, count: int) -> list[dict]:
+    """Fetch `count` random free problems from LeetCode (sync, run in thread)."""
+    difficulty = difficulty.upper()
+    query = """
+    query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+      problemsetQuestionList: questionList(
+        categorySlug: $categorySlug,
+        limit: $limit,
+        skip: $skip,
+        filters: $filters
+      ) {
+        total: totalNum
+        questions: data {
+          title
+          titleSlug
+          difficulty
+          frontendQuestionId: questionFrontendId
+          paidOnly: isPaidOnly
+          topicTags {
+            name
+          }
+        }
+      }
+    }
+    """
+    collected: list[dict] = []
+    seen_slugs: set[str] = set()
+    attempts = 0
+    max_attempts = count * 4
+
+    while len(collected) < count and attempts < max_attempts:
+        attempts += 1
+        skip = random.randint(0, 700)
+        variables = {
+            "categorySlug": "",
+            "limit": 10,
+            "skip": skip,
+            "filters": {"difficulty": difficulty},
+        }
+        try:
+            response = requests.post(
+                "https://leetcode.com/graphql",
+                json={"query": query, "variables": variables},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                continue
+            questions = (
+                response.json()
+                .get("data", {})
+                .get("problemsetQuestionList", {})
+                .get("questions", [])
+            )
+            for p in questions:
+                if p.get("paidOnly") or p["titleSlug"] in seen_slugs:
+                    continue
+                seen_slugs.add(p["titleSlug"])
+                collected.append(p)
+                if len(collected) >= count:
+                    break
+        except Exception as e:
+            log.warning(f"Batch fetch error: {e}")
+
+    return collected
+
+
+async def _ensure_pool_filled(difficulty: str) -> None:
+    """Refill the in-memory pool for `difficulty` up to _POOL_TARGET if needed."""
+    async with _POOL_LOCK:
+        current = len(_PROBLEM_POOL.get(difficulty, []))
+        if current >= _POOL_MIN:
+            return
+        needed = _POOL_TARGET - current
+    log.info(f"🔄 Refilling problem pool for {difficulty} (need {needed} more)")
+    batch = await asyncio.to_thread(_fetch_problems_batch, difficulty, needed)
+    async with _POOL_LOCK:
+        _PROBLEM_POOL.setdefault(difficulty, []).extend(batch)
+        random.shuffle(_PROBLEM_POOL[difficulty])
+    log.info(f"✅ Pool for {difficulty} now has {len(_PROBLEM_POOL[difficulty])} problems")
+
+
+async def seed_problem_pool() -> None:
+    """Pre-warm the problem pool on startup (runs concurrently for all difficulties)."""
+    log.info("🌱 Seeding problem pool on startup…")
+    await asyncio.gather(
+        _ensure_pool_filled("EASY"),
+        _ensure_pool_filled("MEDIUM"),
+        _ensure_pool_filled("HARD"),
+    )
+    log.info("🌱 Problem pool seeded")
+
+
 def fetch_random_problem(difficulty: str = "EASY", exclude_slugs: set = None) -> Optional[Dict]:
-    """Fetch a random problem from LeetCode for the given difficulty."""
+    """Return a random free problem for the given difficulty.
+
+    Tries the in-memory pool first (fast path).  Falls back to a live
+    LeetCode API call when the pool is empty or every pooled problem has
+    already been used by these players.
+    """
     difficulty = (difficulty or "EASY").upper()
     exclude_slugs = exclude_slugs or set()
+
+    # --- Fast path: serve from pool ---
+    pool = _PROBLEM_POOL.get(difficulty, [])
+    random.shuffle(pool)
+    for i, p in enumerate(pool):
+        if p["titleSlug"] not in exclude_slugs:
+            _PROBLEM_POOL[difficulty].pop(i)
+            # Kick off a background refill if the pool is running low (fire-and-forget)
+            if len(_PROBLEM_POOL[difficulty]) < _POOL_MIN:
+                asyncio.get_event_loop().call_soon_threadsafe(
+                    lambda d=difficulty: asyncio.ensure_future(_ensure_pool_filled(d))
+                )
+            log.info(f"⚡ Served {p['titleSlug']} from pool (pool size now {len(_PROBLEM_POOL[difficulty])})")
+            return p
+
+    # --- Slow path: live fetch ---
+    log.info(f"🐢 Pool empty/exhausted for {difficulty}, falling back to live fetch")
     query = """
     query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
       problemsetQuestionList: questionList(

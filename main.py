@@ -50,6 +50,7 @@ from aws import DuelOperations, VerificationOperations
 from logger import debug, info, warning, error
 from scheduler import start_scheduler, stop_scheduler, get_scheduler_status, trigger_job_manually
 from db import init_db
+from background_tasks import seed_problem_pool
 
 
 @asynccontextmanager
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI):
     # 3. Start background monitoring tasks
     duel_task    = asyncio.create_task(monitor_active_duels())
     cleanup_task = asyncio.create_task(cleanup_expired_codes_task())
+
+    # 4. Pre-warm problem pool so duel creation is fast
+    asyncio.create_task(seed_problem_pool())
 
     info("✅ FastAPI server started successfully")
 
