@@ -218,6 +218,17 @@ async def get_progress(
         ).fetchall()
         solved_ids = [r["challenge_id"] for r in solved_rows]
 
+        # Get all attempted-but-not-solved challenge IDs (in-progress)
+        attempted_rows = conn.execute(
+            "SELECT DISTINCT challenge_id FROM frontend_submissions WHERE username = ?",
+            [norm_user],
+        ).fetchall()
+        solved_set = set(solved_ids)
+        in_progress_ids = [
+            r["challenge_id"] for r in attempted_rows
+            if r["challenge_id"] not in solved_set
+        ]
+
         # Get total challenges per category
         all_rows = conn.execute(
             "SELECT challenge_id, category, difficulty FROM frontend_challenges ORDER BY id"
@@ -240,6 +251,7 @@ async def get_progress(
             "success": True,
             "data": {
                 "solved": solved_ids,
+                "in_progress": in_progress_ids,
                 "per_category": dict(per_category),
                 "total_xp": xp_row["total_xp"] if xp_row else 0,
             },

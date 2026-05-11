@@ -34,14 +34,52 @@ async def list_companies(
 
 
 @router.get("/companies/{slug}")
-async def get_company(slug: str, api_key: str = Depends(verify_api_key)):
-    """Return one company + its problems (with daily-unlock metadata for free tier)."""
+async def get_company(
+    slug: str,
+    username: str = "",
+    api_key: str = Depends(verify_api_key),
+):
+    """Return one company + its problems (with daily-unlock metadata for free tier).
+
+    Free-tier callers get problem titles/URLs redacted for problems they
+    haven't unlocked today — the client renders those as locked tiles without
+    revealing the problem name.
+    """
     try:
         company = companies_data.get_company(slug)
         if not company:
             return {"success": False, "error": "Company not found"}
 
         problems = companies_data.get_problems(company["company_id"])
+
+        tier = limits.get_tier(username) if username else "free"
+        if tier != "plus":
+            unlocked_slug = None
+            if username:
+                conn = get_db()
+                try:
+                    row = conn.execute(
+                        "SELECT slug FROM company_problem_unlocks WHERE username = ? AND date = ? AND company_id = ?",
+                        [username.lower(), _today(), company["company_id"]],
+                    ).fetchone()
+                    if row:
+                        unlocked_slug = row["slug"]
+                finally:
+                    conn.close()
+
+            redacted = []
+            for p in problems:
+                if unlocked_slug and p["slug"] == unlocked_slug:
+                    redacted.append(p)
+                else:
+                    redacted.append({
+                        **p,
+                        "title": "",
+                        "leetcode_url": "",
+                        "locked": True,
+                    })
+            problems = redacted
+
         return {
             "success": True,
             "data": {
