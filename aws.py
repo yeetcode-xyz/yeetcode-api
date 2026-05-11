@@ -201,6 +201,29 @@ class UserOperations:
                     (norm_user, norm_email, display_name or username, university, now, now),
                 )
             conn.commit()
+
+            # Immediate LeetCode stats fetch so the user sees their numbers
+            # right away instead of waiting for the next 1-min background pass.
+            try:
+                from background_tasks import fetch_user_stats
+                stats = fetch_user_stats(norm_user)
+                if stats:
+                    conn.execute(
+                        "UPDATE users SET easy = ?, medium = ?, hard = ?, updated_at = ? WHERE username = ?",
+                        [stats.get("easy", 0), stats.get("medium", 0), stats.get("hard", 0), now, norm_user],
+                    )
+                    conn.commit()
+                elif stats is None:
+                    # Username doesn't exist on LeetCode — flag so background loop skips it
+                    conn.execute(
+                        "UPDATE users SET leetcode_invalid = 1 WHERE username = ?",
+                        [norm_user],
+                    )
+                    conn.commit()
+            except Exception as e:
+                # Non-fatal — background task will pick it up next cycle
+                error(f"inline stats fetch failed for {norm_user}: {e}")
+
             row = conn.execute(
                 "SELECT * FROM users WHERE username = ?", [norm_user]
             ).fetchone()
@@ -284,6 +307,26 @@ class UserOperations:
                 ],
             )
             conn.commit()
+
+            # Immediate LeetCode stats fetch — guest's username IS their LeetCode handle
+            try:
+                from background_tasks import fetch_user_stats
+                stats = fetch_user_stats(norm_user)
+                if stats:
+                    conn.execute(
+                        "UPDATE users SET easy = ?, medium = ?, hard = ?, updated_at = ? WHERE username = ?",
+                        [stats.get("easy", 0), stats.get("medium", 0), stats.get("hard", 0), now, norm_user],
+                    )
+                    conn.commit()
+                elif stats is None:
+                    conn.execute(
+                        "UPDATE users SET leetcode_invalid = 1 WHERE username = ?",
+                        [norm_user],
+                    )
+                    conn.commit()
+            except Exception as e:
+                error(f"inline stats fetch failed for guest {norm_user}: {e}")
+
             row = conn.execute(
                 "SELECT * FROM users WHERE username = ?",
                 [norm_user],
