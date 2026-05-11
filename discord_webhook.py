@@ -73,6 +73,51 @@ def send_new_user_notification(username: str, email: str, display_name: str, uni
         error(f"Failed to send Discord notification: {e}")
 
 
+def send_new_subscription_notification(username: str, email: str, display_name: str):
+    """Send a Discord notification when a user subscribes to Plus."""
+    if not DISCORD_WEBHOOK_URL:
+        debug("Discord webhook URL not configured, skipping subscription notification")
+        return
+
+    try:
+        embed = {
+            "title": "💰 New Plus Subscriber!",
+            "color": 0xfacc15,  # YeetCode yellow
+            "fields": [
+                {
+                    "name": "Display Name",
+                    "value": display_name or username,
+                    "inline": True,
+                },
+                {
+                    "name": "LeetCode Username",
+                    "value": f"[{username}](https://leetcode.com/u/{username}/)",
+                    "inline": True,
+                },
+                {
+                    "name": "Email",
+                    "value": email,
+                    "inline": False,
+                },
+            ],
+        }
+
+        payload = {
+            "content": "@everyone",
+            "embeds": [embed],
+        }
+
+        response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+
+        if response.status_code == 204:
+            info(f"Discord subscription notification sent for: {username}")
+        else:
+            error(f"Discord subscription notification failed with status {response.status_code}: {response.text}")
+
+    except Exception as e:
+        error(f"Failed to send Discord subscription notification: {e}")
+
+
 def test_webhook():
     """Send a test notification to verify webhook is working"""
     if not DISCORD_WEBHOOK_URL:

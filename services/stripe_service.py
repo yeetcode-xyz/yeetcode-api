@@ -15,6 +15,7 @@ import stripe
 from db import get_db
 from logger import info, warning, error
 from services.resend_service import send_subscription_welcome_email, send_cancellation_email
+from discord_webhook import send_new_subscription_notification
 
 
 def _api_key() -> str:
@@ -230,6 +231,11 @@ def handle_event(event: dict) -> Dict:
                 send_subscription_welcome_email(
                     email=user_row.get("email") if user_row else None,
                     display_name=user_row.get("display_name") if user_row else None,
+                )
+                send_new_subscription_notification(
+                    username=target_user,
+                    email=user_row.get("email") if user_row else "",
+                    display_name=user_row.get("display_name") if user_row else "",
                 )
             else:
                 warning(f"[stripe] checkout.session.completed: no user for customer={customer_id}")
