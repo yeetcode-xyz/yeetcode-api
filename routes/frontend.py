@@ -115,6 +115,48 @@ async def frontend_quota(
         return {"success": False, "error": str(e)}
 
 
+@router.post("/frontend/touch")
+async def touch_challenge(
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Mark a challenge as "viewed" so it shows up as in-progress.
+
+    Idempotent: inserts a single solved=0 row only if the user has no prior
+    submission rows for this challenge. The monthly free-tier cap is tracked
+    in a separate `frontend_usage` table, so this insert does not consume
+    any quota.
+    """
+    try:
+        username = (request.get("username") or "").lower()
+        challenge_id = request.get("challenge_id") or ""
+        if not username or not challenge_id:
+            return {"success": False, "error": "username and challenge_id are required"}
+
+        conn = get_db()
+        try:
+            existing = conn.execute(
+                "SELECT id FROM frontend_submissions WHERE username = ? AND challenge_id = ? LIMIT 1",
+                [username, challenge_id],
+            ).fetchone()
+            if existing:
+                return {"success": True, "data": {"already_touched": True}}
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """INSERT INTO frontend_submissions
+                   (username, challenge_id, solved, created_at)
+                   VALUES (?, ?, 0, ?)""",
+                [username, challenge_id, now_iso],
+            )
+            conn.commit()
+            return {"success": True, "data": {"touched": True}}
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @router.post("/frontend/submit")
 async def submit_solution(
     request: dict,
