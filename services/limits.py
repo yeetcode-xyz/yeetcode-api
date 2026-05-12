@@ -229,8 +229,25 @@ def maybe_unlock_frontend_bonus(username: str) -> bool:
 FREEZE_ALLOWANCE = {"free": 2, "plus": 5}
 
 
+def _coerce_int(val) -> int:
+    """Coerce DB value to int — handles BLOB-stored ints from old migrations."""
+    if val is None:
+        return 0
+    if isinstance(val, (bytes, bytearray)):
+        return int.from_bytes(val, "little")
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return 0
+
+
 def _ensure_freeze_period(conn, username: str, tier: str) -> Dict:
-    """If the stored period key != current month, reset balance to tier allowance."""
+    """Resolve the user's freeze balance for the current period.
+
+    - If the stored period key != current month → reset balance to tier allowance.
+    - If the stored balance exceeds the current tier's allowance (e.g. user
+      downgraded from Plus to Free mid-month) → cap it at the new allowance.
+    """
     row = conn.execute(
         "SELECT streak_freezes_remaining, streak_freezes_period_key FROM users WHERE username = ?",
         [username],
@@ -240,8 +257,10 @@ def _ensure_freeze_period(conn, username: str, tier: str) -> Dict:
 
     period = current_month()
     stored_key = row["streak_freezes_period_key"]
+    allowance = FREEZE_ALLOWANCE.get(tier, 1)
+
     if stored_key != period:
-        new_balance = FREEZE_ALLOWANCE.get(tier, 1)
+        # New month → reset to allowance
         conn.execute(
             """
             UPDATE users
@@ -249,15 +268,23 @@ def _ensure_freeze_period(conn, username: str, tier: str) -> Dict:
                    streak_freezes_period_key = ?
              WHERE username = ?
             """,
-            [new_balance, period, username],
+            [allowance, period, username],
         )
         conn.commit()
-        return {"remaining": new_balance, "period_key": period}
+        return {"remaining": allowance, "period_key": period}
 
-    return {
-        "remaining": (row["streak_freezes_remaining"] or 0),
-        "period_key": stored_key,
-    }
+    remaining = _coerce_int(row["streak_freezes_remaining"])
+
+    # Tier downgrade mid-month → cap at the lower allowance
+    if remaining > allowance:
+        conn.execute(
+            "UPDATE users SET streak_freezes_remaining = ? WHERE username = ?",
+            [allowance, username],
+        )
+        conn.commit()
+        remaining = allowance
+
+    return {"remaining": remaining, "period_key": stored_key}
 
 
 def freeze_status(username: str) -> Dict:

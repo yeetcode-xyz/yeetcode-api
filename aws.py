@@ -90,6 +90,7 @@ def _user_row_to_leaderboard(user: Dict) -> Dict:
         "hard":     _safe_int(user.get("hard")),
         "today":    _safe_int(user.get("today")),
         "xp":       _calc_total_xp(user),
+        "streak":   _safe_int(user.get("streak")),
         "is_guest": bool(_safe_int(user.get("is_guest"))),
         "group_id": user.get("group_id"),
     }
@@ -414,7 +415,7 @@ class UserOperations:
         try:
             rows = conn.execute(
                 """
-                SELECT username, display_name, university, easy, medium, hard, xp
+                SELECT username, display_name, university, easy, medium, hard, xp, streak
                 FROM users
                 WHERE university IS NOT NULL
                   AND university != ''
