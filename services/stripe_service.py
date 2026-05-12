@@ -104,6 +104,7 @@ def create_checkout_session(username: str, email: Optional[str], display_name: O
         success_url=_success_url(),
         cancel_url=_cancel_url(),
         allow_promotion_codes=True,
+        payment_method_collection="if_required",
         subscription_data={"metadata": {"username": username.lower()}},
         metadata={"username": username.lower()},
     )
