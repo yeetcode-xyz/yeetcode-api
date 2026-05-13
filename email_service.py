@@ -26,13 +26,31 @@ def _post_discord(webhook_url: str, payload: dict):
 
 
 def send_email_otp(email: str, code: str, site: str | None = None) -> Dict:
-    """Send OTP via Discord webhook."""
+    """Send OTP via Resend (prod) or Discord webhook (preview/fallback).
+
+    Resend is the preferred channel when RESEND_API_KEY is set — that's
+    production. Discord is the fallback for preview environments and local
+    development where we don't want to spam real inboxes.
+    """
     if DEBUG_MODE:
         print(f"[DEBUG] OTP for {email}: {code}")
 
+    # Prefer Resend (real email) when configured — this is production.
+    try:
+        from services.resend_service import is_configured, send_otp_email
+        if is_configured():
+            ok = send_otp_email(email, code)
+            if ok:
+                return {"success": True, "messageId": f"resend-{int(time.time())}"}
+            # Fall through to Discord if Resend failed
+    except Exception as e:
+        if DEBUG_MODE:
+            print(f"[DEBUG] Resend OTP send raised: {e}")
+
+    # Discord fallback — preview, dev, or Resend outage
     webhook_url = DISCORD_OTP_WEBHOOK_URL or DISCORD_WEBHOOK_URL
     if not webhook_url:
-        print(f"[WARN] No Discord webhook configured. OTP for {email}: {code}")
+        print(f"[WARN] No email channel configured. OTP for {email}: {code}")
         return {"success": True, "messageId": f"console-{int(time.time())}"}
 
     payload = {

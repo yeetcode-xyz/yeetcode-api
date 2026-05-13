@@ -262,3 +262,95 @@ def send_cancellation_email(
     except Exception as e:
         error(f"[resend] cancellation email failed for {email}: {e}")
         return False
+
+
+def is_configured() -> bool:
+    """Public check used by other services to decide whether to use Resend."""
+    return _configured()
+
+
+def send_otp_email(email: str, code: str) -> bool:
+    """Send a 6-digit OTP via Resend. Returns True on success, False otherwise."""
+    if not email:
+        warning("[resend] OTP email skipped: no email")
+        return False
+
+    if not _configured():
+        warning("[resend] OTP email skipped: RESEND_API_KEY not set")
+        return False
+
+    subject = f"Your YeetCode verification code: {code}"
+
+    html = f"""\
+<!DOCTYPE html>
+<html>
+  <body style="margin:0;padding:0;background:#facc15;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0a0a0a;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#facc15;padding:40px 20px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:3px solid #000;border-radius:16px;box-shadow:6px 6px 0 #000;">
+            <tr>
+              <td style="padding:32px 32px 8px 32px;">
+                <div style="display:inline-block;background:#000;color:#facc15;font-weight:800;font-size:11px;letter-spacing:3px;text-transform:uppercase;padding:6px 14px;border-radius:999px;">
+                  Verification code
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 32px 0 32px;">
+                <h1 style="margin:0;font-size:32px;line-height:1.1;font-weight:800;letter-spacing:-0.02em;">
+                  Your code is ready.
+                </h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 32px;">
+                <div style="background:#fef3c7;border:3px solid #000;border-radius:12px;padding:24px;text-align:center;">
+                  <div style="font-family:'SF Mono',Menlo,Monaco,Consolas,monospace;font-size:42px;font-weight:800;letter-spacing:12px;color:#000;">
+                    {code}
+                  </div>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 24px 32px;">
+                <p style="margin:0;font-size:14px;line-height:1.5;color:#525252;">
+                  Enter this code in YeetCode to finish signing in. It expires in <b>10 minutes</b>.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 32px 32px 32px;">
+                <p style="margin:0;font-size:12px;line-height:1.5;color:#a3a3a3;">
+                  Didn't request this? You can safely ignore this email.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+    text = (
+        f"Your YeetCode verification code is: {code}\n\n"
+        "It expires in 10 minutes.\n\n"
+        "Didn't request this? You can safely ignore this email."
+    )
+
+    try:
+        result = resend.Emails.send(
+            {
+                "from": FROM_ADDRESS,
+                "to": email,
+                "subject": subject,
+                "html": html,
+                "text": text,
+            }
+        )
+        info(f"[resend] OTP email sent to {email}: id={result.get('id')}")
+        return True
+    except Exception as e:
+        error(f"[resend] OTP email failed for {email}: {e}")
+        return False
