@@ -42,10 +42,12 @@ def _safe_int(val, default: int = 0) -> int:
 
 
 _INT_FIELDS = {
-    "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid",
+    "easy", "medium", "hard", "xp", "streak", "today", "leetcode_invalid", "is_guest",
     "is_wager", "wager_amount", "challenger_wager", "challengee_wager",
     "challenger_time", "challengee_time", "expires_at",
     "count", "expiry_date", "start_date", "xp_reward",
+    "weekly_solved", "streak_freezes_remaining",
+    "guest_challenger", "solved", "tests_passed", "tests_total", "time_ms", "xp_awarded",
 }
 
 def _row_to_dict(row) -> Optional[Dict]:
@@ -53,10 +55,11 @@ def _row_to_dict(row) -> Optional[Dict]:
     if row is None:
         return None
     d = dict(row)
-    # Coerce any integer fields stored as BLOB bytes from the DynamoDB migration
-    for field in _INT_FIELDS:
-        if field in d and isinstance(d[field], (bytes, bytearray)):
-            d[field] = _safe_int(d[field])
+    # Coerce ANY bytes/bytearray value to int — covers known _INT_FIELDS
+    # plus any new columns that might have BLOB-stored integers
+    for key, val in d.items():
+        if isinstance(val, (bytes, bytearray)):
+            d[key] = _safe_int(val)
     easy   = _safe_int(d.get("easy"))
     medium = _safe_int(d.get("medium"))
     hard   = _safe_int(d.get("hard"))
@@ -87,6 +90,8 @@ def _user_row_to_leaderboard(user: Dict) -> Dict:
         "hard":     _safe_int(user.get("hard")),
         "today":    _safe_int(user.get("today")),
         "xp":       _calc_total_xp(user),
+        "streak":   _safe_int(user.get("streak")),
+        "is_guest": bool(_safe_int(user.get("is_guest"))),
         "group_id": user.get("group_id"),
     }
 
@@ -101,6 +106,11 @@ def normalize_dynamodb_item(item: Dict) -> Dict:
 # ---------------------------------------------------------------------------
 
 class UserOperations:
+
+    @staticmethod
+    def _build_guest_email(username: str) -> str:
+        safe = username.lower().replace("@", "_at_")
+        return f"guest__{safe}@guest.yeetcode.local"
 
     @staticmethod
     def get_user_data(username: str) -> Optional[Dict]:
@@ -140,15 +150,81 @@ class UserOperations:
 
         conn = get_db()
         try:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO users
-                    (username, email, display_name, university, created_at, updated_at)
-                VALUES (?,?,?,?,?,?)
-                """,
-                (norm_user, norm_email, display_name or username, university, now, now),
-            )
+            existing_email = conn.execute(
+                "SELECT username FROM users WHERE email = ?",
+                [norm_email],
+            ).fetchone()
+            if existing_email and existing_email["username"] != norm_user:
+                raise Exception("An account with this email already exists")
+
+            existing_user = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+
+            if existing_user:
+                existing = _row_to_dict(existing_user)
+                if bool(_safe_int(existing.get("is_guest"))):
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET email = ?, display_name = ?, university = ?, is_guest = 0, updated_at = ?
+                        WHERE username = ?
+                        """,
+                        [
+                            norm_email,
+                            display_name or username,
+                            university,
+                            now,
+                            norm_user,
+                        ],
+                    )
+                else:
+                    if existing.get("email", "").lower() != norm_email:
+                        raise Exception("This username is already associated with another account")
+                    conn.execute(
+                        """
+                        UPDATE users
+                        SET display_name = COALESCE(?, display_name),
+                            university = COALESCE(?, university),
+                            updated_at = ?
+                        WHERE username = ?
+                        """,
+                        [display_name, university, now, norm_user],
+                    )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO users
+                        (username, email, display_name, university, is_guest, created_at, updated_at)
+                    VALUES (?,?,?,?,0,?,?)
+                    """,
+                    (norm_user, norm_email, display_name or username, university, now, now),
+                )
             conn.commit()
+
+            # Immediate LeetCode stats fetch so the user sees their numbers
+            # right away instead of waiting for the next 1-min background pass.
+            try:
+                from background_tasks import fetch_user_stats
+                stats = fetch_user_stats(norm_user)
+                if stats:
+                    conn.execute(
+                        "UPDATE users SET easy = ?, medium = ?, hard = ?, updated_at = ? WHERE username = ?",
+                        [stats.get("easy", 0), stats.get("medium", 0), stats.get("hard", 0), now, norm_user],
+                    )
+                    conn.commit()
+                elif stats is None:
+                    # Username doesn't exist on LeetCode — flag so background loop skips it
+                    conn.execute(
+                        "UPDATE users SET leetcode_invalid = 1 WHERE username = ?",
+                        [norm_user],
+                    )
+                    conn.commit()
+            except Exception as e:
+                # Non-fatal — background task will pick it up next cycle
+                error(f"inline stats fetch failed for {norm_user}: {e}")
+
             row = conn.execute(
                 "SELECT * FROM users WHERE username = ?", [norm_user]
             ).fetchone()
@@ -187,6 +263,83 @@ class UserOperations:
             conn.close()
 
     @staticmethod
+    def create_guest_user(username: str, display_name: str = None) -> Dict:
+        norm_user = username.lower().strip()
+        if not norm_user:
+            raise Exception("Username is required")
+
+        now = datetime.now(timezone.utc).isoformat()
+        conn = get_db()
+        try:
+            existing_row = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+
+            if existing_row:
+                existing = _row_to_dict(existing_row)
+                if not bool(_safe_int(existing.get("is_guest"))):
+                    raise Exception("This LeetCode username already has an account. Sign in to continue.")
+                conn.execute(
+                    "UPDATE users SET updated_at = ? WHERE username = ?",
+                    [now, norm_user],
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM users WHERE username = ?",
+                    [norm_user],
+                ).fetchone()
+                return _row_to_dict(row)
+
+            guest_email = UserOperations._build_guest_email(norm_user)
+            conn.execute(
+                """
+                INSERT INTO users
+                    (username, email, display_name, is_guest, created_at, updated_at)
+                VALUES (?,?,?,?,?,?)
+                """,
+                [
+                    norm_user,
+                    guest_email,
+                    display_name or username,
+                    1,
+                    now,
+                    now,
+                ],
+            )
+            conn.commit()
+
+            # Immediate LeetCode stats fetch — guest's username IS their LeetCode handle
+            try:
+                from background_tasks import fetch_user_stats
+                stats = fetch_user_stats(norm_user)
+                if stats:
+                    conn.execute(
+                        "UPDATE users SET easy = ?, medium = ?, hard = ?, updated_at = ? WHERE username = ?",
+                        [stats.get("easy", 0), stats.get("medium", 0), stats.get("hard", 0), now, norm_user],
+                    )
+                    conn.commit()
+                elif stats is None:
+                    conn.execute(
+                        "UPDATE users SET leetcode_invalid = 1 WHERE username = ?",
+                        [norm_user],
+                    )
+                    conn.commit()
+            except Exception as e:
+                error(f"inline stats fetch failed for guest {norm_user}: {e}")
+
+            row = conn.execute(
+                "SELECT * FROM users WHERE username = ?",
+                [norm_user],
+            ).fetchone()
+            return _row_to_dict(row)
+        except Exception as e:
+            error(f"create_guest_user failed for {username}: {e}")
+            raise
+        finally:
+            conn.close()
+
+    @staticmethod
     def award_xp(username: str, xp_amount: int) -> bool:
         """Atomically increment bonus XP (negative for wager losses)."""
         conn = get_db()
@@ -200,6 +353,40 @@ class UserOperations:
         except Exception as e:
             error(f"award_xp failed for {username}: {e}")
             return False
+        finally:
+            conn.close()
+
+    @staticmethod
+    def merge_guest_history(new_username: str, leetcode_username: str) -> Dict:
+        """
+        Merge any guest duel rows keyed by `leetcode_username` onto `new_username`.
+
+        Called during onboarding *after* LeetCode profile ownership is verified.
+        Only touches rows where `guest_challenger = 1` to prevent hijacking duels
+        created by legitimate registered users who happen to share the handle.
+        """
+        nu = new_username.lower()
+        lu = leetcode_username.lower()
+        if not nu or not lu:
+            return {"success": False, "error": "usernames required"}
+
+        conn = get_db()
+        try:
+            chall = conn.execute(
+                "UPDATE duels SET challenger = ?, guest_challenger = 0 "
+                "WHERE LOWER(challenger) = ?",
+                [nu, lu],
+            ).rowcount
+            chalee = conn.execute(
+                "UPDATE duels SET challengee = ? "
+                "WHERE LOWER(challengee) = ?",
+                [nu, lu],
+            ).rowcount
+            conn.commit()
+            return {"success": True, "merged_challenger": chall, "merged_challengee": chalee}
+        except Exception as e:
+            error(f"merge_guest_history failed for {new_username} ← {leetcode_username}: {e}")
+            return {"success": False, "error": str(e)}
         finally:
             conn.close()
 
@@ -228,7 +415,7 @@ class UserOperations:
         try:
             rows = conn.execute(
                 """
-                SELECT username, display_name, university, easy, medium, hard, xp
+                SELECT username, display_name, university, easy, medium, hard, xp, streak
                 FROM users
                 WHERE university IS NOT NULL
                   AND university != ''
@@ -385,6 +572,13 @@ class GroupOperations:
 
         conn = get_db()
         try:
+            # Verify the group actually exists before joining
+            group = conn.execute(
+                "SELECT group_id FROM groups WHERE group_id = ?", [invite_code]
+            ).fetchone()
+            if not group:
+                return {"success": False, "error": "Invalid group code. No group found with that code."}
+
             conn.execute(
                 "UPDATE users SET group_id = ?, display_name = COALESCE(?, display_name), updated_at = ? WHERE username = ?",
                 [invite_code, display_name or username, now, norm_user],
@@ -543,22 +737,34 @@ class DailyProblemOperations:
 
     @staticmethod
     def _calc_streak(conn, username: str) -> int:
-        """Count consecutive completed days ending at today (or yesterday)."""
+        """Count consecutive completed days ending at today (or yesterday).
+
+        Days protected by a streak freeze (streak_freeze_log) count as
+        completed for the purpose of preserving the chain.
+        """
         today = datetime.now(timezone.utc).date()
-        rows  = conn.execute(
-            "SELECT date FROM daily_completions WHERE username = ? ORDER BY date DESC",
-            [username],
+        rows = conn.execute(
+            "SELECT date FROM daily_completions WHERE username = ?", [username]
         ).fetchall()
         dates = {row["date"] for row in rows}
 
+        try:
+            freeze_rows = conn.execute(
+                "SELECT used_date FROM streak_freeze_log WHERE username = ?", [username]
+            ).fetchall()
+            for r in freeze_rows:
+                dates.add(r["used_date"])
+        except Exception:
+            pass  # table may be missing on a freshly-migrated DB
+
         streak = 0
-        check  = today
+        check = today
         if today.strftime("%Y-%m-%d") not in dates:
             check = today - timedelta(days=1)
 
         while check.strftime("%Y-%m-%d") in dates:
             streak += 1
-            check  -= timedelta(days=1)
+            check -= timedelta(days=1)
 
         return streak
 
@@ -613,7 +819,15 @@ class DailyProblemOperations:
             current_streak = user_row["streak"] if user_row else 0
             last_date      = user_row["last_completed_date"] if user_row else None
 
-            new_streak = current_streak + 1 if last_date == yesterday else 1
+            # A streak chains if yesterday was completed normally OR was
+            # protected by a streak freeze.
+            yesterday_frozen = conn.execute(
+                "SELECT 1 FROM streak_freeze_log WHERE username = ? AND used_date = ?",
+                [norm_user, yesterday],
+            ).fetchone()
+
+            chains = (last_date == yesterday) or bool(yesterday_frozen)
+            new_streak = current_streak + 1 if chains else 1
 
             conn.execute(
                 """
@@ -966,6 +1180,28 @@ class DuelOperations:
             conn.close()
 
     @staticmethod
+    def get_attempted_slugs(usernames: list) -> set:
+        """Return all problem slugs that any of the given users have appeared in as a duel participant."""
+        if not usernames:
+            return set()
+        norm = [u.lower() for u in usernames]
+        placeholders = ",".join("?" * len(norm))
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                f"SELECT DISTINCT problem_slug FROM duels "
+                f"WHERE (challenger IN ({placeholders}) OR challengee IN ({placeholders})) "
+                f"AND problem_slug IS NOT NULL AND problem_slug != ''",
+                norm + norm,
+            ).fetchall()
+            return {r[0] for r in rows}
+        except Exception as e:
+            error(f"get_attempted_slugs failed: {e}")
+            return set()
+        finally:
+            conn.close()
+
+    @staticmethod
     def get_all_duels() -> Dict:
         conn = get_db()
         try:
@@ -999,20 +1235,23 @@ class DuelOperations:
         username: str, opponent: str, problem_slug: str,
         problem_title: str = None, problem_number: str = None,
         difficulty: str = None, is_wager: bool = False,
-        wager_amount: int = None,
+        wager_amount: int = None, guest_challenger: bool = False,
     ) -> Dict:
         norm_user     = username.lower()
         norm_opponent = opponent.lower()
         duel_id       = str(uuid.uuid4())
         now_iso       = datetime.now(timezone.utc).isoformat()
         expires_at    = int(time.time()) + 3600  # 1 hour
+        challenger_data = UserOperations.get_user_data(norm_user)
+
+        if not challenger_data:
+            raise Exception(f"Challenger not found: {norm_user}")
 
         if is_wager:
+            if guest_challenger or bool(_safe_int(challenger_data.get("is_guest"))):
+                raise Exception("Guest users cannot create wager duels")
             if not wager_amount or wager_amount < 25:
                 raise Exception("Wager amount must be at least 25 XP")
-            challenger_data = UserOperations.get_user_data(norm_user)
-            if not challenger_data:
-                raise Exception(f"Challenger not found: {norm_user}")
             if _calc_total_xp(challenger_data) < wager_amount:
                 raise Exception(f"Challenger has insufficient XP (needs {wager_amount})")
 
@@ -1023,8 +1262,8 @@ class DuelOperations:
                 INSERT INTO duels
                     (duel_id, challenger, challengee, problem_slug, problem_title,
                      problem_number, difficulty, status, is_wager, challenger_wager,
-                     created_at, expires_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     created_at, expires_at, guest_challenger)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 [
                     duel_id, norm_user, norm_opponent,
@@ -1033,6 +1272,7 @@ class DuelOperations:
                     1 if is_wager else 0,
                     wager_amount or 0,
                     now_iso, expires_at,
+                    1 if guest_challenger else 0,
                 ],
             )
             conn.commit()
@@ -1076,6 +1316,8 @@ class DuelOperations:
             if is_wager and challenger_wager > 0:
                 challengee_wager = challenger_wager
                 opp_data = UserOperations.get_user_data(norm_user)
+                if opp_data and bool(_safe_int(opp_data.get("is_guest"))):
+                    raise Exception("Claim your account before accepting wager duels")
                 if not opp_data or _calc_total_xp(opp_data) < challengee_wager:
                     raise Exception(f"You need at least {challengee_wager} XP to accept this wager duel")
 
@@ -1232,6 +1474,10 @@ class DuelOperations:
                 is_wager     = bool(_safe_int(duel.get("is_wager")))
                 chall_wager  = _safe_int(duel.get("challenger_wager"))
                 chalee_wager = _safe_int(duel.get("challengee_wager"))
+                guest_challenger = bool(_safe_int(duel.get("guest_challenger")))
+
+                def _is_guest(u: str) -> bool:
+                    return guest_challenger and u == challenger
 
                 if new_challenger_time < new_challengee_time:
                     winner = challenger
@@ -1245,20 +1491,26 @@ class DuelOperations:
                         l_wager  = chalee_wager if winner == challenger else chall_wager
                         bonus    = DuelOperations.calculate_duel_xp(difficulty, True)
                         total_xp = w_wager + l_wager + bonus
-                        UserOperations.award_xp(winner, w_wager + l_wager)
-                        UserOperations.award_xp(winner, bonus)
-                        UserOperations.award_xp(loser,  -l_wager)
+                        if not _is_guest(winner):
+                            UserOperations.award_xp(winner, w_wager + l_wager)
+                            UserOperations.award_xp(winner, bonus)
+                        if not _is_guest(loser):
+                            UserOperations.award_xp(loser,  -l_wager)
                         duel_action(f"Wager duel {duel_id}: {winner} won {total_xp} XP", winner=winner)
                 else:
                     bonus    = DuelOperations.calculate_duel_xp(difficulty, True)
                     total_xp = bonus
                     if winner:
                         loser = challengee if winner == challenger else challenger
-                        UserOperations.award_xp(winner, bonus)
-                        UserOperations.award_xp(loser, 25)
+                        if not _is_guest(winner):
+                            UserOperations.award_xp(winner, bonus)
+                        if not _is_guest(loser):
+                            UserOperations.award_xp(loser, 25)
                     else:
-                        UserOperations.award_xp(challenger, bonus)
-                        UserOperations.award_xp(challengee, bonus)
+                        if not _is_guest(challenger):
+                            UserOperations.award_xp(challenger, bonus)
+                        if not _is_guest(challengee):
+                            UserOperations.award_xp(challengee, bonus)
                     duel_action(f"Duel {duel_id} completed", winner=winner or "TIE")
 
                 conn.execute(
@@ -1271,7 +1523,7 @@ class DuelOperations:
                 )
                 conn.commit()
 
-                # Push result notifications
+                # Push result notifications (skip guest recipients — no account, no subscriptions)
                 try:
                     from push_service import send_push
                     loser = challengee if winner == challenger else challenger
@@ -1280,11 +1532,15 @@ class DuelOperations:
                         l_data = UserOperations.get_user_data(loser)
                         w_display = (w_data or {}).get("display_name") or winner
                         l_display = (l_data or {}).get("display_name") or loser
-                        send_push(winner, "🏆 Duel Won!", f"You beat {l_display}! +{total_xp} XP")
-                        send_push(loser,  "😤 Duel Lost", f"{w_display} beat you. Rematch?")
+                        if not _is_guest(winner):
+                            send_push(winner, "🏆 Duel Won!", f"You beat {l_display}! +{total_xp} XP")
+                        if not _is_guest(loser):
+                            send_push(loser,  "😤 Duel Lost", f"{w_display} beat you. Rematch?")
                     else:
-                        send_push(challenger, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
-                        send_push(challengee, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
+                        if not _is_guest(challenger):
+                            send_push(challenger, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
+                        if not _is_guest(challengee):
+                            send_push(challengee, "🤝 Duel Tied!", "It's a tie! Both players solved it.")
                 except Exception:
                     pass
 
@@ -1384,7 +1640,7 @@ class DuelOperations:
         """Create a duel open to any group member (challengee='OPEN')."""
         return DuelOperations.create_duel(
             challenger, "OPEN", problem_slug, problem_title,
-            problem_number, difficulty, is_wager, wager_amount
+            problem_number, difficulty, is_wager, wager_amount,
         )
 
     @staticmethod
@@ -1461,7 +1717,7 @@ class DuelOperations:
     # ── Duel invites (for non-users) ─────────────────────────────────────────
 
     @staticmethod
-    def create_duel_invite(challenger: str, difficulty: str, email: str = None) -> Dict:
+    def create_duel_invite(challenger: str, difficulty: str, email: str = None, is_guest: bool = False) -> Dict:
         """Create a shareable invite link. Optionally send to an email address."""
         import secrets
         token      = secrets.token_urlsafe(12)
@@ -1472,10 +1728,10 @@ class DuelOperations:
         try:
             conn.execute(
                 """
-                INSERT INTO duel_invites (token, challenger, email, difficulty, created_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO duel_invites (token, challenger, email, difficulty, created_at, expires_at, is_guest)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                [token, challenger.lower(), email, difficulty or "EASY", now_iso, expires_at],
+                [token, challenger.lower(), email, difficulty or "EASY", now_iso, expires_at, 1 if is_guest else 0],
             )
             conn.commit()
             invite_url = f"https://yeetcode.xyz/duel-invite/{token}"
@@ -1544,19 +1800,73 @@ class DuelOperations:
             if not problem:
                 raise Exception("Could not find a suitable problem — try again")
 
+            is_guest_challenger = bool(_safe_int(inv.get("is_guest")))
             result = DuelOperations.create_duel(
                 inv["challenger"], username,
                 problem["titleSlug"], problem["title"],
                 problem["frontendQuestionId"], problem["difficulty"],
+                guest_challenger=is_guest_challenger,
             )
 
             # Delete the invite so it can only be used once
             conn.execute("DELETE FROM duel_invites WHERE token = ?", [token])
             conn.commit()
 
+            # Guest has no dashboard — auto-start the duel for them at accept time
+            # so the background poller can detect their LeetCode submissions.
+            # The challengee still clicks "Start Duel" from their dashboard.
+            if is_guest_challenger and result.get("success"):
+                new_duel_id = result.get("data", {}).get("duel_id")
+                if new_duel_id:
+                    try:
+                        DuelOperations.start_duel(inv["challenger"], new_duel_id)
+                    except Exception as e:
+                        error(f"guest auto-start_duel failed for {new_duel_id}: {e}")
+
             return {**result, "challengerName": inv["challenger"]}
         except Exception as e:
             error(f"accept_duel_invite failed: {e}")
             raise
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_guest_duel_status(challenger: str, token: str = None) -> Dict:
+        """
+        Status helper for a guest poller. Returns one of:
+          - pending_invite: the invite token still exists (nobody accepted yet)
+          - no_duel:        no recent duel found for this challenger
+          - duel:           a recent duel exists, with the latest row normalized
+        """
+        norm_user = challenger.lower()
+        conn = get_db()
+        try:
+            if token:
+                inv = conn.execute(
+                    "SELECT 1 FROM duel_invites WHERE token = ?", [token]
+                ).fetchone()
+                if inv:
+                    return {"success": True, "status": "pending_invite"}
+
+            # Find the most recent duel where this guest is challenger
+            row = conn.execute(
+                """
+                SELECT * FROM duels
+                WHERE challenger = ? AND guest_challenger = 1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [norm_user],
+            ).fetchone()
+
+            if not row:
+                return {"success": True, "status": "no_duel"}
+
+            duel = _row_to_dict(row)
+            duel["is_wager"] = bool(duel.get("is_wager"))
+            return {"success": True, "status": "duel", "duel": duel}
+        except Exception as e:
+            error(f"get_guest_duel_status failed: {e}")
+            return {"success": False, "error": str(e)}
         finally:
             conn.close()

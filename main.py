@@ -37,11 +37,19 @@ from routes.bounties import router as bounties_router
 from routes.duels import router as duels_router
 from routes.admin import router as admin_router
 from routes.push import router as push_router
+from routes.blitz import router as blitz_router
+from routes.ai import router as ai_router
+from routes.roadmap import router as roadmap_router
+from routes.frontend import router as frontend_router
+from routes.billing import router as billing_router
+from routes.streak import router as streak_router
+from routes.companies import router as companies_router
 
 from aws import DuelOperations, VerificationOperations
 from logger import debug, info, warning, error
 from scheduler import start_scheduler, stop_scheduler, get_scheduler_status, trigger_job_manually
 from db import init_db
+from background_tasks import seed_problem_pool
 
 
 @asynccontextmanager
@@ -61,6 +69,9 @@ async def lifespan(app: FastAPI):
     # 3. Start background monitoring tasks
     duel_task    = asyncio.create_task(monitor_active_duels())
     cleanup_task = asyncio.create_task(cleanup_expired_codes_task())
+
+    # 4. Pre-warm problem pool so duel creation is fast
+    asyncio.create_task(seed_problem_pool())
 
     info("✅ FastAPI server started successfully")
 
@@ -107,6 +118,13 @@ app.include_router(bounties_router)
 app.include_router(duels_router)
 app.include_router(admin_router)
 app.include_router(push_router)
+app.include_router(blitz_router)
+app.include_router(ai_router)
+app.include_router(roadmap_router)
+app.include_router(frontend_router)
+app.include_router(billing_router)
+app.include_router(streak_router)
+app.include_router(companies_router)
 
 if DEBUG_MODE:
     print("[DEBUG] Registered routes:")

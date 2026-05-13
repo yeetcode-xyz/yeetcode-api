@@ -122,9 +122,9 @@ def fetch_user_tag_stats(username: str) -> Optional[Dict[str, int]]:
     return counts
 
 
-def fetch_user_weekly_count(username: str) -> int:
-    """Count unique problems solved by the user in the last 7 days.
-    Returns 0 on any error.
+def fetch_user_weekly_count(username: str) -> tuple:
+    """Fetch recent accepted submissions. Returns (weekly_count, {slug: timestamp_iso}).
+    Returns (0, {}) on any error.
     """
     query = """
       query recentAcSubmissions($username: String!, $limit: Int!) {
@@ -144,11 +144,12 @@ def fetch_user_weekly_count(username: str) -> int:
         data = response.json()
     except Exception as e:
         log.error(f"Error fetching weekly count for {username}: {e}")
-        return 0
+        return 0, {}
 
     submissions = (data.get("data") or {}).get("recentAcSubmissionList") or []
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=7)
-    seen: set = set()
+    weekly_seen: set = set()
+    all_solved: dict = {}  # slug -> ISO timestamp (earliest seen)
     for sub in submissions:
         ts = sub.get("timestamp")
         slug = sub.get("titleSlug")
@@ -158,9 +159,62 @@ def fetch_user_weekly_count(username: str) -> int:
             sub_dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
         except Exception:
             continue
+        if slug not in all_solved:
+            all_solved[slug] = sub_dt.isoformat()
         if sub_dt >= cutoff:
-            seen.add(slug)
-    return len(seen)
+            weekly_seen.add(slug)
+    return len(weekly_seen), all_solved
+
+
+# In-memory cache of all roadmap slugs, loaded once
+_roadmap_slug_cache: dict = {}  # list_name -> set of slugs
+
+
+def _load_roadmap_slugs():
+    """Load all roadmap problem slugs from DB into memory (called once)."""
+    if _roadmap_slug_cache:
+        return
+    conn = get_db()
+    try:
+        for list_name, table in [
+            ("blind75", "blind75_problems"),
+            ("neetcode150", "neetcode150_problems"),
+            ("neetcode250", "neetcode250_problems"),
+        ]:
+            rows = conn.execute(f"SELECT slug FROM {table}").fetchall()
+            _roadmap_slug_cache[list_name] = {r["slug"] for r in rows}
+    except Exception:
+        pass  # tables may not exist yet on first run
+    finally:
+        conn.close()
+
+
+def update_roadmap_progress(username: str, solved_slugs: dict):
+    """
+    Cross-reference a user's recently solved slugs against roadmap problem lists.
+    Inserts into roadmap_progress for any matches. No extra LeetCode API calls.
+    """
+    _load_roadmap_slugs()
+    if not _roadmap_slug_cache:
+        return
+
+    conn = get_db()
+    try:
+        for list_name, slug_set in _roadmap_slug_cache.items():
+            matched = slug_set & set(solved_slugs.keys())
+            for slug in matched:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO roadmap_progress (username, list_name, slug, solved_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    [username, list_name, slug, solved_slugs.get(slug)],
+                )
+        conn.commit()
+    except Exception as e:
+        log.error(f"update_roadmap_progress failed for {username}: {e}")
+    finally:
+        conn.close()
 
 
 def check_daily_completion(username: str) -> Optional[str]:
@@ -281,8 +335,12 @@ async def process_single_user(username: str) -> bool:
                 "tag_stats": json.dumps(tag_stats_result),
             })
 
-        weekly_count = await asyncio.to_thread(fetch_user_weekly_count, username)
+        weekly_count, solved_slugs = await asyncio.to_thread(fetch_user_weekly_count, username)
         UserOperations.update_user_data(username.lower(), {"weekly_solved": weekly_count})
+
+        # Update roadmap progress from the already-fetched submissions
+        if solved_slugs:
+            await asyncio.to_thread(update_roadmap_progress, username.lower(), solved_slugs)
 
         # Check daily completion
         today      = datetime.utcnow().strftime("%Y-%m-%d")
@@ -506,9 +564,159 @@ async def update_bounty_progress():
 # TASK 3: Generate Daily Problem
 # ========================================
 
-def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
-    """Fetch a random problem from LeetCode for the given difficulty."""
+def fetch_problem_tags(slug: str) -> List[str]:
+    """Fetch LeetCode topicTags for a problem slug. Returns [] on failure."""
+    if not slug:
+        return []
+    query = """
+      query questionTopicTags($titleSlug: String!) {
+        question(titleSlug: $titleSlug) {
+          topicTags { name }
+        }
+      }
+    """
+    try:
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": query, "variables": {"titleSlug": slug}},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            log.warning(f"LeetCode tag fetch failed ({response.status_code}) for {slug}")
+            return []
+        question = (response.json().get("data") or {}).get("question") or {}
+        return [t.get("name") for t in (question.get("topicTags") or []) if t.get("name")]
+    except Exception as e:
+        log.warning(f"LeetCode tag fetch error for {slug}: {e}")
+        return []
+
+
+# In-memory pool of pre-fetched problems keyed by difficulty.
+# Seeded on startup and replenished when it runs low.
+_PROBLEM_POOL: dict[str, list[dict]] = {"EASY": [], "MEDIUM": [], "HARD": []}
+_POOL_LOCK = asyncio.Lock()
+_POOL_MIN = 5    # replenish when a difficulty drops below this
+_POOL_TARGET = 30  # fill each difficulty up to this count
+
+
+def _fetch_problems_batch(difficulty: str, count: int) -> list[dict]:
+    """Fetch `count` random free problems from LeetCode (sync, run in thread)."""
+    difficulty = difficulty.upper()
+    query = """
+    query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
+      problemsetQuestionList: questionList(
+        categorySlug: $categorySlug,
+        limit: $limit,
+        skip: $skip,
+        filters: $filters
+      ) {
+        total: totalNum
+        questions: data {
+          title
+          titleSlug
+          difficulty
+          frontendQuestionId: questionFrontendId
+          paidOnly: isPaidOnly
+          topicTags {
+            name
+          }
+        }
+      }
+    }
+    """
+    collected: list[dict] = []
+    seen_slugs: set[str] = set()
+    attempts = 0
+    max_attempts = count * 4
+
+    while len(collected) < count and attempts < max_attempts:
+        attempts += 1
+        skip = random.randint(0, 700)
+        variables = {
+            "categorySlug": "",
+            "limit": 10,
+            "skip": skip,
+            "filters": {"difficulty": difficulty},
+        }
+        try:
+            response = requests.post(
+                "https://leetcode.com/graphql",
+                json={"query": query, "variables": variables},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                continue
+            questions = (
+                response.json()
+                .get("data", {})
+                .get("problemsetQuestionList", {})
+                .get("questions", [])
+            )
+            for p in questions:
+                if p.get("paidOnly") or p["titleSlug"] in seen_slugs:
+                    continue
+                seen_slugs.add(p["titleSlug"])
+                collected.append(p)
+                if len(collected) >= count:
+                    break
+        except Exception as e:
+            log.warning(f"Batch fetch error: {e}")
+
+    return collected
+
+
+async def _ensure_pool_filled(difficulty: str) -> None:
+    """Refill the in-memory pool for `difficulty` up to _POOL_TARGET if needed."""
+    async with _POOL_LOCK:
+        current = len(_PROBLEM_POOL.get(difficulty, []))
+        if current >= _POOL_MIN:
+            return
+        needed = _POOL_TARGET - current
+    log.info(f"🔄 Refilling problem pool for {difficulty} (need {needed} more)")
+    batch = await asyncio.to_thread(_fetch_problems_batch, difficulty, needed)
+    async with _POOL_LOCK:
+        _PROBLEM_POOL.setdefault(difficulty, []).extend(batch)
+        random.shuffle(_PROBLEM_POOL[difficulty])
+    log.info(f"✅ Pool for {difficulty} now has {len(_PROBLEM_POOL[difficulty])} problems")
+
+
+async def seed_problem_pool() -> None:
+    """Pre-warm the problem pool on startup (runs concurrently for all difficulties)."""
+    log.info("🌱 Seeding problem pool on startup…")
+    await asyncio.gather(
+        _ensure_pool_filled("EASY"),
+        _ensure_pool_filled("MEDIUM"),
+        _ensure_pool_filled("HARD"),
+    )
+    log.info("🌱 Problem pool seeded")
+
+
+def fetch_random_problem(difficulty: str = "EASY", exclude_slugs: set = None) -> Optional[Dict]:
+    """Return a random free problem for the given difficulty.
+
+    Tries the in-memory pool first (fast path).  Falls back to a live
+    LeetCode API call when the pool is empty or every pooled problem has
+    already been used by these players.
+    """
     difficulty = (difficulty or "EASY").upper()
+    exclude_slugs = exclude_slugs or set()
+
+    # --- Fast path: serve from pool ---
+    pool = _PROBLEM_POOL.get(difficulty, [])
+    random.shuffle(pool)
+    for i, p in enumerate(pool):
+        if p["titleSlug"] not in exclude_slugs:
+            _PROBLEM_POOL[difficulty].pop(i)
+            # Kick off a background refill if the pool is running low (fire-and-forget)
+            if len(_PROBLEM_POOL[difficulty]) < _POOL_MIN:
+                asyncio.get_event_loop().call_soon_threadsafe(
+                    lambda d=difficulty: asyncio.ensure_future(_ensure_pool_filled(d))
+                )
+            log.info(f"⚡ Served {p['titleSlug']} from pool (pool size now {len(_PROBLEM_POOL[difficulty])})")
+            return p
+
+    # --- Slow path: live fetch ---
+    log.info(f"🐢 Pool empty/exhausted for {difficulty}, falling back to live fetch")
     query = """
     query problemsetQuestionList($categorySlug: String, $limit: Int, $skip: Int, $filters: QuestionListFilterInput) {
       problemsetQuestionList: questionList(
@@ -532,7 +740,7 @@ def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
     }
     """
 
-    for attempt in range(5):
+    for attempt in range(10):
         skip = random.randint(0, 700)
         log.info(f"🎲 Attempt {attempt + 1}: skip index {skip}")
 
@@ -560,9 +768,13 @@ def fetch_random_problem(difficulty: str = "EASY") -> Optional[Dict]:
                 continue
 
             problem = questions[0]
-            if not problem.get("paidOnly"):
-                return problem
-            log.info(f"💸 Skipped paid-only: {problem['title']}")
+            if problem.get("paidOnly"):
+                log.info(f"💸 Skipped paid-only: {problem['title']}")
+                continue
+            if problem["titleSlug"] in exclude_slugs:
+                log.info(f"⏭️ Skipped already-attempted: {problem['titleSlug']}")
+                continue
+            return problem
 
         except Exception as e:
             log.error(f"Error fetching problem: {e}")
@@ -675,12 +887,16 @@ async def poll_active_duels():
     Background task: Check active duels every 3 seconds.
     For each user in an active duel who hasn't submitted yet,
     poll LeetCode's recent accepted submissions.
+
+    Also auto-starts guest-challenger duels that are stuck in ACCEPTED state:
+    the guest has no dashboard to click "Start Duel" from, so we flip them
+    to ACTIVE with a backdated start_time to capture pre-existing submissions.
     """
     try:
         conn = get_db()
         try:
             rows = conn.execute(
-                "SELECT * FROM duels WHERE status = 'ACTIVE'"
+                "SELECT * FROM duels WHERE status IN ('ACTIVE', 'ACCEPTED')"
             ).fetchall()
         finally:
             conn.close()
@@ -690,7 +906,13 @@ async def poll_active_duels():
 
         for row in rows:
             duel = dict(row)
+            # Coerce BLOB-stored ints (legacy DynamoDB-migrated rows) to real ints
+            for f in ("challenger_time", "challengee_time", "guest_challenger"):
+                v = duel.get(f)
+                if isinstance(v, (bytes, bytearray)):
+                    duel[f] = int.from_bytes(v, "little")
             duel_id      = duel.get("duel_id")
+            status       = duel.get("status")
             problem_slug = duel.get("problem_slug")
             challenger   = duel.get("challenger")
             challengee   = duel.get("challengee")
@@ -698,8 +920,43 @@ async def poll_active_duels():
             e_time       = duel.get("challengee_time", -1)
             c_start      = duel.get("challenger_start_time")
             e_start      = duel.get("challengee_start_time")
+            is_guest     = bool(duel.get("guest_challenger") or 0)
 
             if not problem_slug:
+                continue
+
+            # Auto-start guests stuck in ACCEPTED. Backdate the start time so
+            # any submission they already made (since the duel was created)
+            # counts. Cap the backdate to the duel creation time to stay honest.
+            if status == "ACCEPTED" and is_guest and (c_time is None or c_time < 0):
+                from datetime import datetime, timezone
+                created_at = duel.get("created_at")
+                try:
+                    backdate_iso = created_at or datetime.now(timezone.utc).isoformat()
+                except Exception:
+                    backdate_iso = datetime.now(timezone.utc).isoformat()
+                conn = get_db()
+                try:
+                    conn.execute(
+                        """
+                        UPDATE duels
+                        SET status = 'ACTIVE',
+                            challenger_time = 0,
+                            challenger_start_time = COALESCE(challenger_start_time, ?),
+                            start_time = COALESCE(start_time, ?)
+                        WHERE duel_id = ?
+                        """,
+                        [backdate_iso, backdate_iso, duel_id],
+                    )
+                    conn.commit()
+                    log.info(f"🔓 Guest auto-start for stuck duel {duel_id}")
+                finally:
+                    conn.close()
+                c_time  = 0
+                c_start = backdate_iso
+                status  = "ACTIVE"
+
+            if status != "ACTIVE":
                 continue
 
             tasks = []

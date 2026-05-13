@@ -23,6 +23,11 @@ class CreateUserRequest(BaseModel):
     university: str = None
 
 
+class CreateGuestRequest(BaseModel):
+    username: str
+    display_name: str = None
+
+
 @router.get("/user/{username}")
 async def get_user_endpoint(
     username: str,
@@ -108,6 +113,21 @@ async def create_user_with_username_endpoint(
         except Exception as webhook_error:
             error(f"Discord webhook failed for user {request.username}: {webhook_error}")
 
+        return {"success": True, "data": result}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/create-guest-user")
+async def create_guest_user_endpoint(
+    request: CreateGuestRequest,
+    api_key: str = Depends(verify_api_key)
+):
+    """Create or resume a lightweight guest account keyed by LeetCode username."""
+    try:
+        result = UserOperations.create_guest_user(
+            request.username, request.display_name
+        )
         return {"success": True, "data": result}
     except Exception as e:
         return {"success": False, "error": str(e)}

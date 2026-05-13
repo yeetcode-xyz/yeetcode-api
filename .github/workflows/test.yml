@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+        env:
+          PORT: "6969"
+          YEETCODE_API_KEY: "test-api-key"
+          SQLITE_PATH: "/tmp/test_yeetcode.db"
+          RESEND_API_KEY: "fake"
+          GEMINI_API_KEY: "fake"
+          STRIPE_SECRET_KEY: "sk_test_fake"
+          STRIPE_WEBHOOK_SECRET: "whsec_fake"
+          VAPID_PRIVATE_KEY: "fake"
+          VAPID_PUBLIC_KEY: "fake"
+          DEBUG_MODE: "false"
