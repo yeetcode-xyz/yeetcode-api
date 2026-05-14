@@ -96,18 +96,33 @@ def create_checkout_session(username: str, email: Optional[str], display_name: O
     customer_id = _ensure_customer(username, email, display_name)
     sc = _client()
 
-    session = sc.checkout.Session.create(
-        mode="subscription",
-        customer=customer_id,
-        client_reference_id=username.lower(),
-        line_items=[{"price": _price_id(), "quantity": 1}],
-        success_url=_success_url(),
-        cancel_url=_cancel_url(),
-        allow_promotion_codes=True,
-        payment_method_collection="if_required",
-        subscription_data={"metadata": {"username": username.lower()}},
-        metadata={"username": username.lower()},
-    )
+    # Wallets (Apple Pay on Safari, Google Pay where enabled) surface when `card`
+    # is a payment method. Optional STRIPE_PAYMENT_METHOD_CONFIGURATION_ID lets
+    # you control methods from the Stripe Dashboard instead of this default list.
+    session_params: Dict = {
+        "mode": "subscription",
+        "customer": customer_id,
+        "client_reference_id": username.lower(),
+        "line_items": [{"price": _price_id(), "quantity": 1}],
+        "success_url": _success_url(),
+        "cancel_url": _cancel_url(),
+        "allow_promotion_codes": True,
+        "payment_method_collection": "if_required",
+        "subscription_data": {"metadata": {"username": username.lower()}},
+        "metadata": {"username": username.lower()},
+    }
+
+    pmc = (os.getenv("STRIPE_PAYMENT_METHOD_CONFIGURATION_ID") or "").strip()
+    if pmc:
+        session_params["payment_method_configuration"] = pmc
+    else:
+        # Card + wallet rails (Apple Pay on Safari, Google Pay where enabled).
+        session_params["payment_method_types"] = ["card"]
+        session_params["payment_method_options"] = {
+            "card": {"request_three_d_secure": "automatic"},
+        }
+
+    session = sc.checkout.Session.create(**session_params)
     return {"id": session.id, "url": session.url}
 
 
