@@ -148,6 +148,11 @@ class UserOperations:
         norm_email = email.lower()
         now        = datetime.now(timezone.utc).isoformat()
 
+        # Block profane display names at the door
+        if display_name:
+            from services.profanity import reject_if_profane
+            reject_if_profane(display_name, "display name")
+
         conn = get_db()
         try:
             existing_email = conn.execute(
@@ -267,6 +272,13 @@ class UserOperations:
         norm_user = username.lower().strip()
         if not norm_user:
             raise Exception("Username is required")
+
+        # Guests use their LeetCode username as their identifier — block
+        # profanity in both the username AND the display name.
+        from services.profanity import reject_if_profane
+        reject_if_profane(norm_user, "username")
+        if display_name:
+            reject_if_profane(display_name, "display name")
 
         now = datetime.now(timezone.utc).isoformat()
         conn = get_db()

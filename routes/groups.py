@@ -102,6 +102,13 @@ async def update_display_name_endpoint(
         if not request.display_name or not request.display_name.strip():
             return {"success": False, "error": "No display name provided"}
 
+        from services.profanity import is_profane
+        if is_profane(request.display_name):
+            return {
+                "success": False,
+                "error": "That display name contains language we don't allow. Pick something else.",
+            }
+
         updates = {'display_name': request.display_name}
         success = UserOperations.update_user_data(request.username, updates)
         return {"success": success}
