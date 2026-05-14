@@ -544,14 +544,26 @@ class GroupOperations:
     @staticmethod
     def create_group(username: str, display_name: Optional[str] = None) -> Dict:
         norm_user = username.lower()
-        group_id  = str(random.randint(10000, 99999))
         now       = datetime.now(timezone.utc).isoformat()
 
         conn = get_db()
         try:
+            # Generate a unique 5-digit group_id (retry on collision)
+            for _ in range(10):
+                candidate = str(random.randint(10000, 99999))
+                existing = conn.execute(
+                    "SELECT 1 FROM groups WHERE group_id = ?", [candidate]
+                ).fetchone()
+                if not existing:
+                    group_id = candidate
+                    break
+            else:
+                raise Exception("Could not generate a unique group ID, please try again")
+
+            group_name = f"{display_name or username}'s Group"
             conn.execute(
-                "INSERT OR IGNORE INTO groups (group_id, leader, created_at) VALUES (?,?,?)",
-                [group_id, norm_user, now],
+                "INSERT INTO groups (group_id, name, leader, created_at) VALUES (?,?,?,?)",
+                [group_id, group_name, norm_user, now],
             )
             conn.execute(
                 "UPDATE users SET group_id = ?, display_name = COALESCE(?, display_name), updated_at = ? WHERE username = ?",
