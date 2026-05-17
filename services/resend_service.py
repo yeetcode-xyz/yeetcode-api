@@ -14,6 +14,7 @@ import resend
 from logger import info, warning, error
 
 FROM_ADDRESS = "hello@yeetcode.xyz"
+REPLY_TO = "yeetcodeadmin@gmail.com"
 DASHBOARD_URL = "https://yeetcode.xyz/dashboard"
 AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
 
@@ -145,6 +146,7 @@ def send_subscription_welcome_email(
         result = resend.Emails.send(
             {
                 "from": FROM_ADDRESS,
+                "reply_to": REPLY_TO,
                 "to": email,
                 "subject": subject,
                 "html": html,
@@ -252,6 +254,7 @@ def send_cancellation_email(
         result = resend.Emails.send(
             {
                 "from": FROM_ADDRESS,
+                "reply_to": REPLY_TO,
                 "to": email,
                 "subject": subject,
                 "html": html,
@@ -344,6 +347,7 @@ def send_otp_email(email: str, code: str) -> bool:
         result = resend.Emails.send(
             {
                 "from": FROM_ADDRESS,
+                "reply_to": REPLY_TO,
                 "to": email,
                 "subject": subject,
                 "html": html,
