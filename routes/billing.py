@@ -191,3 +191,48 @@ async def resend_webhook(request: Request):
             conn.close()
 
     return {"success": True}
+
+
+FORWARD_TO = "yeetcodeadmin@gmail.com"
+
+
+@router.post("/webhooks/resend-inbound")
+async def resend_inbound(request: Request):
+    """Receive inbound emails sent to hello@yeetcode.xyz and forward to the admin Gmail."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    sender    = data.get("from", "unknown")
+    subject   = data.get("subject") or "(no subject)"
+    text_body = data.get("text") or ""
+    html_body = data.get("html") or ""
+
+    import resend as _resend
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key:
+        warning("[resend-inbound] RESEND_API_KEY not set, cannot forward")
+        return {"success": True}
+    _resend.api_key = api_key
+
+    fwd_html = f"""\
+<p><b>From:</b> {sender}</p>
+<p><b>Subject:</b> {subject}</p>
+<hr/>
+{html_body or f"<pre>{text_body}</pre>"}
+"""
+    try:
+        _resend.Emails.send({
+            "from": "hello@yeetcode.xyz",
+            "to": FORWARD_TO,
+            "reply_to": sender,
+            "subject": f"Fwd: {subject}",
+            "html": fwd_html,
+            "text": f"From: {sender}\nSubject: {subject}\n\n{text_body}",
+        })
+        info(f"[resend-inbound] forwarded email from {sender} to {FORWARD_TO}")
+    except Exception as e:
+        error(f"[resend-inbound] forward failed: {e}")
+
+    return {"success": True}
