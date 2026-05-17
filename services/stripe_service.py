@@ -14,7 +14,7 @@ import stripe
 
 from db import get_db
 from logger import info, warning, error
-from services.resend_service import send_subscription_welcome_email, send_cancellation_email
+from services.resend_service import send_subscription_welcome_email, send_cancellation_email, update_contact_tier
 from discord_webhook import send_new_subscription_notification
 
 
@@ -248,6 +248,10 @@ def handle_event(event: dict) -> Dict:
                     email=user_row.get("email") if user_row else None,
                     display_name=user_row.get("display_name") if user_row else None,
                 )
+                update_contact_tier(
+                    email=user_row.get("email") if user_row else None,
+                    tier="plus",
+                )
                 send_new_subscription_notification(
                     username=target_user,
                     email=user_row.get("email") if user_row else "",
@@ -268,8 +272,11 @@ def handle_event(event: dict) -> Dict:
             warning(f"[stripe] {type_}: no user mapping for customer={customer_id}")
         else:
             _apply_subscription(username, obj)
+            status = obj.get("status")
+            tier = "plus" if status in ACTIVE_STATUSES else "free"
+            user_row = _get_user_row(username)
+            update_contact_tier(email=user_row.get("email") if user_row else None, tier=tier)
             if type_ == "customer.subscription.deleted":
-                user_row = _get_user_row(username)
                 send_cancellation_email(
                     email=user_row.get("email") if user_row else None,
                     display_name=user_row.get("display_name") if user_row else None,

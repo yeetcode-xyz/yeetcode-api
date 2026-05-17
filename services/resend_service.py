@@ -13,8 +13,9 @@ import resend
 
 from logger import info, warning, error
 
-FROM_ADDRESS = os.getenv("RESEND_FROM", "hello@yeetcode.xyz")
-DASHBOARD_URL = os.getenv("DASHBOARD_URL", "https://yeetcode.xyz/dashboard")
+FROM_ADDRESS = "hello@yeetcode.xyz"
+DASHBOARD_URL = "https://yeetcode.xyz/dashboard"
+AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
 
 
 def _configured() -> bool:
@@ -353,4 +354,88 @@ def send_otp_email(email: str, code: str) -> bool:
         return True
     except Exception as e:
         error(f"[resend] OTP email failed for {email}: {e}")
+        return False
+
+
+def add_contact_to_audience(
+    email: Optional[str],
+    display_name: Optional[str] = None,
+    university: Optional[str] = None,
+    tier: str = "free",
+) -> bool:
+    """Upsert a contact into the Resend audience with marketing attributes.
+
+    Stored attributes (usable as segment filters in Resend dashboard):
+      - university: e.g. "MIT", "Stanford"
+      - tier: "free" | "plus"
+
+    Requires RESEND_AUDIENCE_ID env var. Does NOT raise — caller must not fail
+    the registration flow if this errors.
+    """
+    if not email:
+        return False
+
+    if not _configured():
+        warning("[resend] add_contact_to_audience skipped: RESEND_API_KEY not set")
+        return False
+
+    if not AUDIENCE_ID:
+        warning("[resend] add_contact_to_audience skipped: RESEND_AUDIENCE_ID not set")
+        return False
+
+    first_name, last_name = None, None
+    if display_name:
+        parts = display_name.strip().split(" ", 1)
+        first_name = parts[0] or None
+        last_name = parts[1] if len(parts) > 1 else None
+
+    try:
+        params: dict = {
+            "audience_id": AUDIENCE_ID,
+            "email": email,
+            "unsubscribed": False,
+        }
+        if first_name:
+            params["first_name"] = first_name
+        if last_name:
+            params["last_name"] = last_name
+
+        attributes: dict = {"tier": tier}
+        if university:
+            attributes["university"] = university
+        params["data"] = attributes
+
+        result = resend.Contacts.create(params)
+        info(f"[resend] contact upserted for {email}: id={result.get('id')}")
+        return True
+    except Exception as e:
+        error(f"[resend] add_contact_to_audience failed for {email}: {e}")
+        return False
+
+
+def update_contact_tier(email: Optional[str], tier: str) -> bool:
+    """Update a contact's tier attribute (e.g. free → plus) after a subscription change.
+
+    The Resend update endpoint accepts email directly as the contact id — no list scan needed.
+    Does NOT raise.
+    """
+    if not email or not tier:
+        return False
+
+    if not _configured():
+        return False
+
+    if not AUDIENCE_ID:
+        return False
+
+    try:
+        resend.Contacts.update({
+            "audience_id": AUDIENCE_ID,
+            "id": email,
+            "data": {"tier": tier},
+        })
+        info(f"[resend] contact tier updated to '{tier}' for {email}")
+        return True
+    except Exception as e:
+        error(f"[resend] update_contact_tier failed for {email}: {e}")
         return False

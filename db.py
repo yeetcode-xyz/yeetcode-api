@@ -424,6 +424,7 @@ def _migrate_add_columns(conn):
         ("users",           "subscription_current_period_end","INTEGER"),
         ("users",           "streak_freezes_remaining",      "INTEGER DEFAULT 1"),
         ("users",           "streak_freezes_period_key",     "TEXT"),
+        ("users",           "marketing_unsubscribed",        "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in additions:
         try:
