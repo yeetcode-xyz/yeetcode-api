@@ -424,6 +424,7 @@ def _migrate_add_columns(conn):
         ("users",           "subscription_current_period_end","INTEGER"),
         ("users",           "streak_freezes_remaining",      "INTEGER DEFAULT 1"),
         ("users",           "streak_freezes_period_key",     "TEXT"),
+        ("users",           "marketing_unsubscribed",        "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in additions:
         try:
@@ -1261,6 +1262,46 @@ def _seed_frontend_challenges(conn):
     conn.commit()
 
 
+def _migrate_backfill_groups(conn):
+    """
+    Backfill the groups table for any users who have a group_id that no longer
+    has a corresponding row in groups. This fixes orphaned group_ids that were
+    carried over from the DynamoDB migration without their groups table entries.
+    """
+    try:
+        orphaned = conn.execute("""
+            SELECT DISTINCT u.group_id
+            FROM users u
+            LEFT JOIN groups g ON g.group_id = u.group_id
+            WHERE u.group_id IS NOT NULL
+              AND g.group_id IS NULL
+        """).fetchall()
+
+        if not orphaned:
+            return
+
+        for row in orphaned:
+            gid = row[0]
+            # Use the earliest member of this group as the leader
+            leader_row = conn.execute("""
+                SELECT username FROM users
+                WHERE group_id = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            """, [gid]).fetchone()
+
+            if leader_row:
+                leader = leader_row[0]
+                conn.execute("""
+                    INSERT OR IGNORE INTO groups (group_id, leader, created_at)
+                    VALUES (?, ?, datetime('now'))
+                """, [gid, leader])
+
+        conn.commit()
+    except Exception:
+        pass  # non-fatal; background retry on next startup
+
+
 def init_db():
     """Initialize database schema and run one-time data migrations on startup."""
     # Ensure parent directory exists
@@ -1273,6 +1314,7 @@ def init_db():
     conn.commit()
     _migrate_blob_integers(conn)
     _migrate_add_columns(conn)
+    _migrate_backfill_groups(conn)
     _seed_blitz_questions(conn)
     _seed_roadmap_problems(conn)
     _seed_frontend_challenges(conn)

@@ -11,6 +11,7 @@ from auth import verify_api_key
 from aws import UserOperations
 from discord_webhook import send_new_user_notification
 from logger import error
+from services.resend_service import add_contact_to_audience
 
 router = APIRouter(tags=["Users"])
 
@@ -112,6 +113,11 @@ async def create_user_with_username_endpoint(
             send_new_user_notification(request.username, request.email, request.display_name, request.university)
         except Exception as webhook_error:
             error(f"Discord webhook failed for user {request.username}: {webhook_error}")
+
+        try:
+            add_contact_to_audience(request.email, request.display_name, request.university)
+        except Exception as audience_error:
+            error(f"Resend audience add failed for user {request.username}: {audience_error}")
 
         return {"success": True, "data": result}
     except Exception as e:

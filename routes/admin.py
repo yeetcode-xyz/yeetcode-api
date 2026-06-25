@@ -212,6 +212,56 @@ async def trigger_backup(
         return {"success": False, "error": str(e)}
 
 
+@router.post("/migrate/backfill-groups")
+async def backfill_groups(
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Backfill the groups table for any users who have a group_id with no corresponding
+    row in groups. This fixes orphaned group_ids from the DynamoDB → SQLite migration.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        orphaned = conn.execute("""
+            SELECT DISTINCT u.group_id
+            FROM users u
+            LEFT JOIN groups g ON g.group_id = u.group_id
+            WHERE u.group_id IS NOT NULL
+              AND g.group_id IS NULL
+        """).fetchall()
+
+        backfilled = []
+        for row in orphaned:
+            gid = row["group_id"]
+            leader_row = conn.execute("""
+                SELECT username FROM users
+                WHERE group_id = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            """, [gid]).fetchone()
+
+            if leader_row:
+                leader = leader_row["username"]
+                conn.execute("""
+                    INSERT OR IGNORE INTO groups (group_id, leader, created_at)
+                    VALUES (?, ?, datetime('now'))
+                """, [gid, leader])
+                backfilled.append({"group_id": gid, "leader": leader})
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "backfilled": len(backfilled),
+            "groups": backfilled,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 # Canonical bounty seed data — update this list when adding new bounties
 BOUNTY_SEED = [
     # (bounty_id, title, description, slug, metric, count, start_date, expiry_date, xp, tags, difficulty_filter)

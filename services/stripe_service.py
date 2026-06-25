@@ -14,7 +14,7 @@ import stripe
 
 from db import get_db
 from logger import info, warning, error
-from services.resend_service import send_subscription_welcome_email, send_cancellation_email
+from services.resend_service import send_subscription_welcome_email, send_cancellation_email, update_contact_tier
 from discord_webhook import send_new_subscription_notification
 
 
@@ -96,18 +96,33 @@ def create_checkout_session(username: str, email: Optional[str], display_name: O
     customer_id = _ensure_customer(username, email, display_name)
     sc = _client()
 
-    session = sc.checkout.Session.create(
-        mode="subscription",
-        customer=customer_id,
-        client_reference_id=username.lower(),
-        line_items=[{"price": _price_id(), "quantity": 1}],
-        success_url=_success_url(),
-        cancel_url=_cancel_url(),
-        allow_promotion_codes=True,
-        payment_method_collection="if_required",
-        subscription_data={"metadata": {"username": username.lower()}},
-        metadata={"username": username.lower()},
-    )
+    # Wallets (Apple Pay on Safari, Google Pay where enabled) surface when `card`
+    # is a payment method. Optional STRIPE_PAYMENT_METHOD_CONFIGURATION_ID lets
+    # you control methods from the Stripe Dashboard instead of this default list.
+    session_params: Dict = {
+        "mode": "subscription",
+        "customer": customer_id,
+        "client_reference_id": username.lower(),
+        "line_items": [{"price": _price_id(), "quantity": 1}],
+        "success_url": _success_url(),
+        "cancel_url": _cancel_url(),
+        "allow_promotion_codes": True,
+        "payment_method_collection": "if_required",
+        "subscription_data": {"metadata": {"username": username.lower()}},
+        "metadata": {"username": username.lower()},
+    }
+
+    pmc = (os.getenv("STRIPE_PAYMENT_METHOD_CONFIGURATION_ID") or "").strip()
+    if pmc:
+        session_params["payment_method_configuration"] = pmc
+    else:
+        # Card + wallet rails (Apple Pay on Safari, Google Pay where enabled).
+        session_params["payment_method_types"] = ["card"]
+        session_params["payment_method_options"] = {
+            "card": {"request_three_d_secure": "automatic"},
+        }
+
+    session = sc.checkout.Session.create(**session_params)
     return {"id": session.id, "url": session.url}
 
 
@@ -233,6 +248,10 @@ def handle_event(event: dict) -> Dict:
                     email=user_row.get("email") if user_row else None,
                     display_name=user_row.get("display_name") if user_row else None,
                 )
+                update_contact_tier(
+                    email=user_row.get("email") if user_row else None,
+                    tier="plus",
+                )
                 send_new_subscription_notification(
                     username=target_user,
                     email=user_row.get("email") if user_row else "",
@@ -253,8 +272,11 @@ def handle_event(event: dict) -> Dict:
             warning(f"[stripe] {type_}: no user mapping for customer={customer_id}")
         else:
             _apply_subscription(username, obj)
+            status = obj.get("status")
+            tier = "plus" if status in ACTIVE_STATUSES else "free"
+            user_row = _get_user_row(username)
+            update_contact_tier(email=user_row.get("email") if user_row else None, tier=tier)
             if type_ == "customer.subscription.deleted":
-                user_row = _get_user_row(username)
                 send_cancellation_email(
                     email=user_row.get("email") if user_row else None,
                     display_name=user_row.get("display_name") if user_row else None,
