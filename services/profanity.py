@@ -2,7 +2,8 @@
 Lightweight profanity filter for user-provided display names / usernames.
 
 Catches: exact bad words, leetspeak (4→a, 0→o, 1→i/l, 3→e, 5→s, 7→t),
-embedded substrings (e.g. "fukcdmin"), and stretched chars (e.g. "fuuuuck").
+symbol obfuscation (f*ck, f4ck, f@ck), embedded substrings (e.g. "fukcdmin"),
+and stretched chars (e.g. "fuuuuck").
 """
 
 import re
@@ -15,8 +16,9 @@ _BAD_WORDS = {
     "bastard", "wank", "twat", "slut", "whore", "faggot",
     "nigger", "nigga", "retard", "kike", "tranny",
     "pedophile", "pedo", "molest", "incest",
-    # Common variants
-    "fck", "fuk", "shyt", "biatch", "azzhole",
+    # Common variants / obfuscations that survive normalization
+    "fck", "fuk", "fvck", "phuck", "fux", "fuxk",
+    "shyt", "biatch", "biotch", "azzhole", "azz",
 }
 
 # Word-boundary-only stems — only match when surrounded by non-letters or at
@@ -38,43 +40,57 @@ _LEET = str.maketrans({
     "1": "i", "!": "i", "3": "e", "7": "t", "+": "t",
 })
 
+_COLLAPSE = re.compile(r"(.)\1+")
 
-def _normalize(text: str, *, collapse_singles: bool = False) -> str:
-    """Lowercase, leet→ascii, optionally collapse repeats, strip non-letters."""
-    s = text.lower().translate(_LEET)
-    if collapse_singles:
-        # Collapse 2+ repeats to 1 (fuuuuck → fuck) — for stretched-letter detection
-        s = re.sub(r"(.)\1+", r"\1", s)
-    # Strip whitespace, punctuation, and digits
-    s = re.sub(r"[^a-z]", "", s)
-    return s
+# Precompute the collapsed form of each bad word once (e.g. "kkk" → "k").
+# Recomputing this per call (per word, per invocation) was pure waste.
+_BAD_WORD_COLLAPSED = {w: _COLLAPSE.sub(r"\1", w) for w in _BAD_WORDS}
+
+
+class ProfanityError(ValueError):
+    """Raised when user-provided text is rejected by the profanity filter.
+
+    Subclasses ValueError (and thus Exception) so existing broad handlers keep
+    working, while callers that care can catch this specifically and map it to
+    a 422 instead of confusing it with a database failure.
+    """
+
+
+def _variants(text: str) -> set:
+    """Normalized forms of `text` to test against substring stems.
+
+    Two orthogonal de-obfuscations, each with a stretched-char variant:
+      * leet-translate then strip non-letters — catches "5h1t" → "shit"
+      * strip non-letters WITHOUT leet — catches "f4ck"/"f*ck" → "fck"
+    Both are needed: leet rescues "5hit"→"shit", strip rescues "f4ck"→"fck"
+    (which leet would turn into "fack" and miss).
+    """
+    leet = text.lower().translate(_LEET)
+    stripped = re.sub(r"[^a-z]", "", text.lower())  # digits/symbols dropped
+    out = set()
+    for base in (leet, stripped):
+        cleaned = re.sub(r"[^a-z]", "", base)
+        if cleaned:
+            out.add(cleaned)
+            out.add(_COLLAPSE.sub(r"\1", cleaned))
+    return out
 
 
 def is_profane(text: str) -> bool:
     """Return True if `text` contains any blocked word after normalization.
 
-    Two passes per stem set:
-      1. Plain leet-normalize (preserves intentional doubles like "ass")
-      2. Collapse-singles variant (catches stretched chars like "fuuuck")
-
     Substring stems match anywhere; strict stems require word boundaries
-    (the original text, not normalized — so "Dickinson" passes but "dick" doesn't).
+    (so "Dickinson" passes but "dick" doesn't).
     """
     if not text:
         return False
 
-    plain = _normalize(text)
-    collapsed = _normalize(text, collapse_singles=True)
-
-    # Substring match for stems that don't appear inside common English words
-    for variant in (plain, collapsed):
-        if not variant:
-            continue
+    for variant in _variants(text):
         for word in _BAD_WORDS:
             if word in variant:
                 return True
             # Stretched-stem check: only worthwhile if collapsed stem is ≥4 chars
-            stem_collapsed = re.sub(r"(.)\1+", r"\1", word)
+            stem_collapsed = _BAD_WORD_COLLAPSED[word]
             if (
                 stem_collapsed != word
                 and len(stem_collapsed) >= 4
@@ -83,21 +99,15 @@ def is_profane(text: str) -> bool:
                 return True
 
     # Boundary-only match for stems prone to false positives.
-    # Build a regex that matches each strict stem only when surrounded by
-    # non-letter chars (or string edges). We test both plain and collapsed
-    # text so leetspeak + stretched variants still get caught.
+    # We test both plain and collapsed text so leetspeak + stretched variants
+    # still get caught, but only when the stem stands alone (non-letter or edge
+    # on each side) — this is what lets real surnames like "Hancock",
+    # "Babcock", "Dickinson", "therapist" through.
     if _STRICT_STEMS:
-        # Apply the strict check on the original-ish text — preserve digits/
-        # punctuation as boundaries, but normalize case + leetspeak so attackers
-        # can't bypass with "D!ck".
         boundary_text = text.lower().translate(_LEET)
-        boundary_collapsed = re.sub(r"(.)\1+", r"\1", boundary_text)
+        boundary_collapsed = _COLLAPSE.sub(r"\1", boundary_text)
         for variant in (boundary_text, boundary_collapsed):
             for word in _STRICT_STEMS:
-                # Match: stem with non-letter (or start/end) on each side.
-                # Trade-off: catches "FuckMyDick_" but not "SuckMyDick" (no
-                # boundary before "dick"). Necessary to allow real surnames
-                # like "Hancock", "Babcock", "Dickinson", "therapist".
                 pattern = rf"(?:^|[^a-z]){re.escape(word)}(?:[^a-z]|$)"
                 if re.search(pattern, variant):
                     return True
@@ -106,8 +116,8 @@ def is_profane(text: str) -> bool:
 
 
 def reject_if_profane(text: str, field: str = "display name") -> None:
-    """Raise an Exception with a user-friendly message if `text` is profane."""
+    """Raise ProfanityError with a user-friendly message if `text` is profane."""
     if is_profane(text):
-        raise Exception(
+        raise ProfanityError(
             f"That {field} contains language we don't allow. Pick something else."
         )

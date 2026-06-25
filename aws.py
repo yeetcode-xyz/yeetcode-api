@@ -148,9 +148,13 @@ class UserOperations:
         norm_email = email.lower()
         now        = datetime.now(timezone.utc).isoformat()
 
-        # Block profane display names at the door
+        # Block profane display names at the door. The username is an external,
+        # immutable LeetCode handle, so we only screen it when creating a
+        # brand-new account (in the INSERT branch below) — never when an
+        # existing user resumes, or a stray filter match on a legit handle
+        # would lock them out of their own account.
+        from services.profanity import reject_if_profane
         if display_name:
-            from services.profanity import reject_if_profane
             reject_if_profane(display_name, "display name")
 
         conn = get_db()
@@ -198,6 +202,8 @@ class UserOperations:
                         [display_name, university, now, norm_user],
                     )
             else:
+                # New account — now screen the LeetCode handle itself.
+                reject_if_profane(norm_user, "username")
                 conn.execute(
                     """
                     INSERT INTO users
@@ -273,12 +279,11 @@ class UserOperations:
         if not norm_user:
             raise Exception("Username is required")
 
-        # Guests use their LeetCode username as their identifier — block
-        # profanity in both the username AND the display name.
+        # The username is an external, immutable LeetCode handle. We only screen
+        # it (and the display name) when actually creating a new account below —
+        # never on resume, or a stray filter match would lock an existing user
+        # out of their own account.
         from services.profanity import reject_if_profane
-        reject_if_profane(norm_user, "username")
-        if display_name:
-            reject_if_profane(display_name, "display name")
 
         now = datetime.now(timezone.utc).isoformat()
         conn = get_db()
@@ -302,6 +307,11 @@ class UserOperations:
                     [norm_user],
                 ).fetchone()
                 return _row_to_dict(row)
+
+            # New account — screen the handle + display name now.
+            reject_if_profane(norm_user, "username")
+            if display_name:
+                reject_if_profane(display_name, "display name")
 
             guest_email = UserOperations._build_guest_email(norm_user)
             conn.execute(
