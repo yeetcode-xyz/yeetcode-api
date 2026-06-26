@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 from auth import verify_api_key
 from db import get_db
+from aws import DailyProblemOperations
 
 router = APIRouter(tags=["Blitz"])
 
@@ -241,6 +242,8 @@ async def submit_blitz_score(
                ORDER BY score DESC, CAST(score AS REAL) / total DESC, time_ms ASC LIMIT 1""",
             [username.lower()],
         ).fetchone()
+
+        DailyProblemOperations.record_activity(username)
 
         return {
             "success": True,
@@ -625,6 +628,8 @@ async def submit_challenge_score(
             winner, c_xp, o_xp = _finish_challenge(conn, token, inv)
             my_xp = c_xp if is_challenger else o_xp
             conn.commit()
+
+        DailyProblemOperations.record_activity(username)
 
         return {"success": True, "data": {"winner": winner, "xp_earned": my_xp}}
     except Exception as e:

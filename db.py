@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS daily_completions (
 CREATE INDEX IF NOT EXISTS idx_completions_date ON daily_completions(date);
 CREATE INDEX IF NOT EXISTS idx_completions_user ON daily_completions(username);
 
+-- One row per (user, day) the user engaged with ANY YeetCode feature
+-- (daily, duel, blitz, frontend, ...). Feeds the streak so it counts all
+-- activity, not just the daily problem.
+CREATE TABLE IF NOT EXISTS activity_days (
+    username    TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    PRIMARY KEY (username, date)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_days(username);
+
 CREATE TABLE IF NOT EXISTS bounties (
     bounty_id        TEXT PRIMARY KEY,
     title            TEXT,

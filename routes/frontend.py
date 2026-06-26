@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
 
 from auth import verify_api_key
-from aws import UserOperations
+from aws import UserOperations, DailyProblemOperations
 from db import get_db
 from services import limits
 
@@ -226,6 +226,9 @@ async def submit_solution(
                     bonus_unlocked = limits.maybe_unlock_frontend_bonus(username)
                 except Exception:
                     pass
+
+            # Submitting a frontend solution counts as feature activity (streak).
+            DailyProblemOperations.record_activity(username)
 
             return {
                 "success": True,

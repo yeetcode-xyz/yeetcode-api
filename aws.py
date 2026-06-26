@@ -771,16 +771,27 @@ class DailyProblemOperations:
 
     @staticmethod
     def _calc_streak(conn, username: str) -> int:
-        """Count consecutive completed days ending at today (or yesterday).
+        """Count consecutive active days ending at today (or yesterday).
 
-        Days protected by a streak freeze (streak_freeze_log) count as
-        completed for the purpose of preserving the chain.
+        A day counts if the user did the daily problem OR used any other
+        YeetCode feature that day (activity_days). Days protected by a streak
+        freeze (streak_freeze_log) also count, to preserve the chain.
         """
         today = datetime.now(timezone.utc).date()
         rows = conn.execute(
             "SELECT date FROM daily_completions WHERE username = ?", [username]
         ).fetchall()
         dates = {row["date"] for row in rows}
+
+        # Any-feature activity also keeps the streak alive.
+        try:
+            activity_rows = conn.execute(
+                "SELECT date FROM activity_days WHERE username = ?", [username]
+            ).fetchall()
+            for r in activity_rows:
+                dates.add(r["date"])
+        except Exception:
+            pass  # table may be missing on a freshly-migrated DB
 
         try:
             freeze_rows = conn.execute(
@@ -801,6 +812,39 @@ class DailyProblemOperations:
             check -= timedelta(days=1)
 
         return streak
+
+    @staticmethod
+    def record_activity(username: str) -> None:
+        """Mark that `username` used a YeetCode feature today, and refresh the
+        cached `users.streak` column so leaderboards/profiles stay in sync.
+
+        Best-effort: never raises into the caller — a feature action should not
+        fail just because streak bookkeeping hit a snag. Deliberately does NOT
+        touch `last_completed_date`; that field means "last DAILY completion"
+        and the background task keys daily auto-detection off it.
+        """
+        if not username:
+            return
+        norm_user = username.lower()
+        today   = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        conn = get_db()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO activity_days (username, date) VALUES (?,?)",
+                [norm_user, today],
+            )
+            new_streak = DailyProblemOperations._calc_streak(conn, norm_user)
+            conn.execute(
+                "UPDATE users SET streak = ?, updated_at = ? WHERE username = ?",
+                [new_streak, now_iso, norm_user],
+            )
+            conn.commit()
+        except Exception as e:
+            error(f"record_activity failed for {username}: {e}")
+        finally:
+            conn.close()
 
     @staticmethod
     def get_user_daily_data(username: str) -> Dict:
@@ -826,7 +870,6 @@ class DailyProblemOperations:
     def complete_daily_problem(username: str) -> Dict:
         """Mark today's daily as completed, update streak, award 200 XP."""
         today     = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
         norm_user = username.lower()
         now_iso   = datetime.now(timezone.utc).isoformat()
 
@@ -844,24 +887,17 @@ class DailyProblemOperations:
                 "INSERT OR IGNORE INTO daily_completions (username, date) VALUES (?,?)",
                 [norm_user, today],
             )
+            # Daily completion is also general activity — record it so the two
+            # sources never disagree.
+            conn.execute(
+                "INSERT OR IGNORE INTO activity_days (username, date) VALUES (?,?)",
+                [norm_user, today],
+            )
 
-            user_row = conn.execute(
-                "SELECT streak, last_completed_date FROM users WHERE username = ?",
-                [norm_user],
-            ).fetchone()
-
-            current_streak = user_row["streak"] if user_row else 0
-            last_date      = user_row["last_completed_date"] if user_row else None
-
-            # A streak chains if yesterday was completed normally OR was
-            # protected by a streak freeze.
-            yesterday_frozen = conn.execute(
-                "SELECT 1 FROM streak_freeze_log WHERE username = ? AND used_date = ?",
-                [norm_user, yesterday],
-            ).fetchone()
-
-            chains = (last_date == yesterday) or bool(yesterday_frozen)
-            new_streak = current_streak + 1 if chains else 1
+            # Single source of truth: consecutive active days (daily completions
+            # + any-feature activity + freezes), computed from the rows we just
+            # wrote (visible within this connection pre-commit).
+            new_streak = DailyProblemOperations._calc_streak(conn, norm_user)
 
             conn.execute(
                 """
@@ -1642,20 +1678,22 @@ class DuelOperations:
 
     @staticmethod
     def cleanup_expired_duels() -> Dict:
-        now    = int(time.time())
-        cutoff = now - 48 * 3600
+        now = int(time.time())
 
         conn = get_db()
         try:
+            # Only purge duels that never became real matches — PENDING/ACCEPTED
+            # invitations that expired before anyone started. COMPLETED duels are
+            # the user's match HISTORY and are kept indefinitely (previously they
+            # were deleted 48h after expiry, which is why history "disappeared").
             cur = conn.execute(
                 """
                 DELETE FROM duels
-                WHERE (status = 'COMPLETED' AND expires_at < ?)
-                   OR (status = 'PENDING'   AND expires_at < ?)
+                WHERE status IN ('PENDING', 'ACCEPTED') AND expires_at < ?
                 """,
-                [cutoff, now],
+                [now],
             )
-            # Also clean expired duel invites
+            # Also clean expired duel invites (shareable links that were never used)
             conn.execute("DELETE FROM duel_invites WHERE expires_at < ?", [now])
             conn.commit()
             return {"success": True, "count": cur.rowcount}

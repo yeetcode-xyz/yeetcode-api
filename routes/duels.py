@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from models import DuelRequest
 from auth import verify_api_key
-from aws import DuelOperations, UserOperations
+from aws import DuelOperations, UserOperations, DailyProblemOperations
 
 async def _pick_problem(difficulty: str, *usernames: str) -> dict | None:
     """Pick a random problem that none of the given users have seen in a duel."""
@@ -123,6 +123,8 @@ async def complete_duel_endpoint(
     """Complete a duel submission (legacy endpoint)"""
     try:
         result = DuelOperations.record_duel_submission(request.username, request.duel_id, 0)
+        if result.get("success"):
+            DailyProblemOperations.record_activity(request.username)
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -159,6 +161,8 @@ async def record_duel_submission_endpoint(
             return {"success": False, "error": "Duel ID and username required"}
 
         result = DuelOperations.record_duel_submission(username, duel_id, elapsed_ms)
+        if result.get("success"):
+            DailyProblemOperations.record_activity(username)
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -216,6 +220,7 @@ async def verify_duel_solve_endpoint(
             return {"success": True, "found": False}
 
         result = DuelOperations.record_duel_submission(username, duel_id, elapsed_ms)
+        DailyProblemOperations.record_activity(username)
         return {
             "success":    True,
             "found":      True,
