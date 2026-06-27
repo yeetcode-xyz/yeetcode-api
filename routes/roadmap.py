@@ -3,6 +3,8 @@ Roadmap routes — Blind 75, NeetCode 150, NeetCode 250
 """
 
 from collections import defaultdict
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 
 from auth import verify_api_key
@@ -105,6 +107,59 @@ async def get_roadmap_progress(
                 "categories": cat_list,
             },
         }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        conn.close()
+
+
+@router.post("/roadmap/{list_name}/{username}/toggle")
+async def toggle_roadmap_solved(
+    list_name: str,
+    username: str,
+    request: dict,
+    api_key: str = Depends(verify_api_key),
+):
+    """Manually mark a roadmap problem solved/unsolved for a user.
+
+    Needed because LeetCode's public API only exposes a user's last ~20 accepted
+    submissions — older solves can't be auto-detected, so users self-mark their
+    history. Body: {slug: str, solved: bool}.
+    """
+    if list_name not in VALID_LISTS:
+        return {"success": False, "error": f"Invalid list. Use: {', '.join(VALID_LISTS)}"}
+
+    slug = (request.get("slug") or "").strip()
+    if not slug:
+        return {"success": False, "error": "slug is required"}
+    solved = bool(request.get("solved", True))
+    norm_user = username.lower()
+
+    conn = get_db()
+    try:
+        # Guard against typos / stale slugs — only allow slugs that exist in the list.
+        table = VALID_LISTS[list_name]
+        exists = conn.execute(
+            f"SELECT 1 FROM {table} WHERE slug = ?", [slug]
+        ).fetchone()
+        if not exists:
+            return {"success": False, "error": "Unknown problem for this list"}
+
+        if solved:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO roadmap_progress (username, list_name, slug, solved_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [norm_user, list_name, slug, datetime.now(timezone.utc).isoformat()],
+            )
+        else:
+            conn.execute(
+                "DELETE FROM roadmap_progress WHERE username = ? AND list_name = ? AND slug = ?",
+                [norm_user, list_name, slug],
+            )
+        conn.commit()
+        return {"success": True, "slug": slug, "solved": solved}
     except Exception as e:
         return {"success": False, "error": str(e)}
     finally:

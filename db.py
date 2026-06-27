@@ -203,7 +203,8 @@ CREATE TABLE IF NOT EXISTS blind75_problems (
     title           TEXT NOT NULL,
     slug            TEXT NOT NULL UNIQUE,
     difficulty      TEXT NOT NULL,
-    problem_number  INTEGER
+    problem_number  INTEGER,
+    is_premium      INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS neetcode150_problems (
@@ -212,7 +213,8 @@ CREATE TABLE IF NOT EXISTS neetcode150_problems (
     title           TEXT NOT NULL,
     slug            TEXT NOT NULL UNIQUE,
     difficulty      TEXT NOT NULL,
-    problem_number  INTEGER
+    problem_number  INTEGER,
+    is_premium      INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS neetcode250_problems (
@@ -221,7 +223,8 @@ CREATE TABLE IF NOT EXISTS neetcode250_problems (
     title           TEXT NOT NULL,
     slug            TEXT NOT NULL UNIQUE,
     difficulty      TEXT NOT NULL,
-    problem_number  INTEGER
+    problem_number  INTEGER,
+    is_premium      INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS roadmap_progress (
@@ -435,6 +438,9 @@ def _migrate_add_columns(conn):
         ("users",           "streak_freezes_remaining",      "INTEGER DEFAULT 1"),
         ("users",           "streak_freezes_period_key",     "TEXT"),
         ("users",           "marketing_unsubscribed",        "INTEGER DEFAULT 0"),
+        ("blind75_problems",     "is_premium",               "INTEGER DEFAULT 0"),
+        ("neetcode150_problems", "is_premium",               "INTEGER DEFAULT 0"),
+        ("neetcode250_problems", "is_premium",               "INTEGER DEFAULT 0"),
     ]
     for table, col, typedef in additions:
         try:
@@ -1249,6 +1255,28 @@ def _seed_roadmap_problems(conn):
     _seed_roadmap_table(conn, "neetcode250_problems", NEETCODE250_PROBLEMS)
 
 
+def _mark_premium_roadmap_problems(conn):
+    """Flag LeetCode-premium problems across all roadmap tables. Idempotent —
+    runs on every startup so the set can be updated by editing PREMIUM_SLUGS.
+    (Can't live in _seed_roadmap_table: that only re-seeds when the row count
+    changes, so existing DBs would never pick up the flags.)"""
+    from roadmap_data import PREMIUM_SLUGS
+    if not PREMIUM_SLUGS:
+        return
+    placeholders = ",".join("?" for _ in PREMIUM_SLUGS)
+    slugs = list(PREMIUM_SLUGS)
+    for table in ("blind75_problems", "neetcode150_problems", "neetcode250_problems"):
+        try:
+            conn.execute(f"UPDATE {table} SET is_premium = 0")
+            conn.execute(
+                f"UPDATE {table} SET is_premium = 1 WHERE slug IN ({placeholders})",
+                slugs,
+            )
+        except Exception:
+            pass  # column/table may not exist yet on a partially-migrated DB
+    conn.commit()
+
+
 def _seed_frontend_challenges(conn):
     """Seed frontend coding challenges. Re-seeds when the list has grown."""
     from frontend_data import FRONTEND_CHALLENGES
@@ -1327,5 +1355,6 @@ def init_db():
     _migrate_backfill_groups(conn)
     _seed_blitz_questions(conn)
     _seed_roadmap_problems(conn)
+    _mark_premium_roadmap_problems(conn)
     _seed_frontend_challenges(conn)
     conn.close()

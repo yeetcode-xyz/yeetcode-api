@@ -3,6 +3,19 @@ Canonical problem lists for Blind 75, NeetCode 150, and NeetCode 250.
 Each problem has: category, title, slug (LeetCode titleSlug), difficulty, problem_number.
 """
 
+# LeetCode-premium problems that appear in these lists. They require a paid
+# LeetCode subscription to open, so the UI flags them (and free users can't be
+# expected to solve them). Applied to the DB via is_premium on startup.
+PREMIUM_SLUGS = {
+    "alien-dictionary",
+    "encode-and-decode-strings",
+    "graph-valid-tree",
+    "meeting-rooms",
+    "meeting-rooms-ii",
+    "number-of-connected-components-in-an-undirected-graph",
+    "walls-and-gates",
+}
+
 BLIND75_PROBLEMS = [
     # ── Arrays & Hashing ─────────────────────────────────────────────────────────
     {"category": "Arrays & Hashing", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "problem_number": 1},
